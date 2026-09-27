@@ -45,7 +45,11 @@ export function restoreGame(json){
     if(list(data.terrain,world.tiles.length).length!==world.tiles.length||list(data.elevation,world.tiles.length).length!==world.tiles.length)fail();
     for(let i=0;i<world.tiles.length;i++){world.tiles[i]=number(data.terrain[i],0,4,true);world.elevation[i]=number(data.elevation[i],-2,2);}
   }
-  const food=new FoodSystem(world),materials=new MaterialSystem(world,food),buildings=new BuildingSystem(world,food,materials);
+  // Versions 1 and 2 stored implicit resource positions. Recreate their
+  // original density before applying the saved amounts.
+  const food=data.version<3?new FoodSystem(world,.008):new FoodSystem(world);
+  const materials=data.version<3?new MaterialSystem(world,food,.015,.025):new MaterialSystem(world,food);
+  const buildings=new BuildingSystem(world,food,materials);
   const nextId=number(data.nextId,1,1e9,true),deaths=number(data.deaths,0,nextId,true),oldAgeDeaths=number(data.oldAgeDeaths,0,deaths,true);
   // Old saves used one minute per year; retain their calendar date after migration.
   const timeScale=data.version<5?12:1;

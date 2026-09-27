@@ -1,6 +1,6 @@
 /** Seeded value noise and domain-warped island terrain. No network assets. */
 export class World {
-  constructor(seed, width=480, height=320) {
+  constructor(seed, width=240, height=160) {
     if(!Number.isInteger(width)||!Number.isInteger(height)||![[240,160],[480,320]].some(([w,h])=>w===width&&h===height))throw new RangeError('対応していない地図サイズです');
     this.seed=seed; this.width=width; this.height=height;
     this.tiles=new Uint8Array(width*height); this.elevation=new Float32Array(width*height);

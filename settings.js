@@ -34,5 +34,5 @@ export const BALANCE = Object.freeze({
   walkingSpeed: 1.8,
   foodRegrowSeconds: 40,
   foodCapacity: 3,
-  foodDensity: 0.008,
+  foodDensity: 0.02,
 });

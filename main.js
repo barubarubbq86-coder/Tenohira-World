@@ -8,7 +8,7 @@ import {SocietySystem} from './society.js';
 import {TerrainEditor} from './terrain-editor.js';
 import {GameAudio} from './audio.js';
 import {MeteorSystem} from './meteor.js';
-import {serializeGame,restoreGame,expandLegacyWorld,MAX_SAVE_BYTES} from './save.js';
+import {serializeGame,restoreGame,MAX_SAVE_BYTES} from './save.js';
 const $=id=>document.getElementById(id);
 class Game {
   constructor(){
@@ -23,18 +23,39 @@ class Game {
     this.societyRenderAt=0;
     this.editor=new TerrainEditor(this.world);
     this.terrain=document.createElement('canvas');this.terrain.width=this.world.width*4;this.terrain.height=this.world.height*4;this.terrainCtx=this.terrain.getContext('2d');
-    for(let i=0;i<this.world.tiles.length;i++)this.drawTerrainCell(i);
+    // Build one bitmap instead of issuing tens of thousands of canvas calls.
+    const image=this.terrainCtx.createImageData(this.terrain.width,this.terrain.height);
+    const pixels=image.data,colors={
+      '#348799':[52,135,153],'#256d82':[37,109,130],'#205b74':[32,91,116],
+      '#d9cf9c':[217,207,156],'#c8c08e':[200,192,142],
+      '#62935d':[98,147,93],'#85af6b':[133,175,107],'#7da567':[125,165,103],
+      '#d6ad62':[214,173,98],'#c99d55':[201,157,85],
+      '#d2d4bf':[210,212,191],'#a7b1a1':[167,177,161],'#8d9d8a':[141,157,138]
+    };
+    for(let i=0;i<this.world.tiles.length;i++){
+      const x=i%this.world.width,y=Math.floor(i/this.world.width),t=this.world.tiles[i],h=this.world.elevation[i],n=this.world.hash(x,y);
+      const color=colors[this.terrainColor(t,h,n)];
+      for(let dy=0;dy<4;dy++)for(let dx=0;dx<4;dx++){
+        const p=((y*4+dy)*this.terrain.width+x*4+dx)*4;
+        const dot=t===2&&n>.86&&dx===1&&dy<2;
+        pixels[p]=dot?80:color[0];pixels[p+1]=dot?126:color[1];pixels[p+2]=dot?81:color[2];pixels[p+3]=255;
+      }
+    }
+    this.terrainCtx.putImageData(image,0,0);
     $('seed').textContent=`#${String(this.world.seed).slice(-6)}`;this.updateCount();this.updateInfo();this.renderNews(false);this.fit();this.message('「人を置く」を選んで、陸地をタップ');
   }
   drawTerrainCell(i){
     const x=i%this.world.width,y=Math.floor(i/this.world.width),c=this.terrainCtx,t=this.world.tiles[i],h=this.world.elevation[i],n=this.world.hash(x,y);
-    if(t===0)c.fillStyle=h>.41?'#348799':h>.33?'#256d82':'#205b74';
-    if(t===1)c.fillStyle=n>.5?'#d9cf9c':'#c8c08e';
-    if(t===2)c.fillStyle=h>.61?'#62935d':n>.5?'#85af6b':'#7da567';
-    if(t===4)c.fillStyle=n>.5?'#d6ad62':'#c99d55';
-    if(t===3)c.fillStyle=h>.79?'#d2d4bf':n>.5?'#a7b1a1':'#8d9d8a';
+    c.fillStyle=this.terrainColor(t,h,n);
     c.fillRect(x*4,y*4,4,4);
     if(t===2&&n>.86){c.fillStyle='#507e51';c.fillRect(x*4+1,y*4,1,2);}
+  }
+  terrainColor(t,h,n){
+    if(t===0)return h>.41?'#348799':h>.33?'#256d82':'#205b74';
+    if(t===1)return n>.5?'#d9cf9c':'#c8c08e';
+    if(t===2)return h>.61?'#62935d':n>.5?'#85af6b':'#7da567';
+    if(t===4)return n>.5?'#d6ad62':'#c99d55';
+    return h>.79?'#d2d4bf':n>.5?'#a7b1a1':'#8d9d8a';
   }
   refreshLand(changed=[]){
     const oldFood=this.food,oldMaterials=this.materials,changedSet=new Set(changed);
@@ -229,7 +250,7 @@ class Game {
     $('load-file').disabled=true;
     try{
       if(file.size>MAX_SAVE_BYTES)throw new Error('ファイルは8MBまでです');
-      const state=expandLegacyWorld(restoreGame(await file.text()));
+      const state=restoreGame(await file.text());
       this.pendingLoad=state;this.loadWasPaused=this.paused;this.setPaused(true);
       const years=Math.floor(state.elapsedSeconds/BALANCE.secondsPerYear);
       $('load-summary').textContent=`${years}年経過・人口${state.people.length}人の世界を読み込みます。現在の世界は置き換わります。必要なら「戻る」を押して保存してください。`;
@@ -446,3 +467,14 @@ class Game {
 const game=new Game();
 if(document.modelContext?.registerTool){try{Promise.resolve(document.modelContext.registerTool({name:'read_world',description:'現在の世界の人口と地形サイズを確認する',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true},execute:()=>({population:game.people.length,houses:game.buildings.total,width:game.world.width,height:game.world.height,seed:game.world.seed})})).catch(()=>{});}catch{}}
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
+let installPrompt=null;
+const installButton=$('install-app'),installHint=$('install-hint');
+const installed=()=>window.matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
+if(installed())installButton.hidden=true;
+window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;installButton.hidden=false;installHint.hidden=true;});
+window.addEventListener('appinstalled',()=>{installPrompt=null;installButton.hidden=true;installHint.hidden=true;});
+installButton.addEventListener('click',async()=>{
+  if(installPrompt){const prompt=installPrompt;installPrompt=null;await prompt.prompt();await prompt.userChoice;return;}
+  installHint.textContent='AndroidのChromeでは右上の「︙」→「アプリをインストール」または「ホーム画面に追加」を選んでください。iPhoneでは共有→「ホーム画面に追加」です。';
+  installHint.hidden=false;
+});

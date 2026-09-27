@@ -50,3 +50,5 @@
 
 #meteor.selected{background:#f3a268;color:#2f211b;border-color:#ffd2a6}
 #speed-actual{display:block;font-size:11px;font-weight:400;white-space:nowrap;opacity:.85}
+
+#install-hint{margin:8px 0;color:#c7e6a1;font-size:13px;line-height:1.6}#install-app[hidden],#install-hint[hidden]{display:none}

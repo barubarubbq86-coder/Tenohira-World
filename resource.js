@@ -2,11 +2,11 @@ import {BALANCE} from './settings.js';
 import {routeField} from './navigation.js';
 /** Food and a shared breadth-first route map. Routes never cross water or mountains. */
 export class FoodSystem {
-  constructor(world) {
+  constructor(world,density=BALANCE.foodDensity) {
     this.world=world; this.items=[]; this.byCell=new Map();this.clock=0;this.dirty=true;
     for(let i=0;i<world.tiles.length;i++) {
       const x=i%world.width,y=Math.floor(i/world.width);
-      if(world.tiles[i]===2&&world.hash(x+917,y+581)<BALANCE.foodDensity){
+      if(world.tiles[i]===2&&world.hash(x+917,y+581)<density){
         const food={cell:i,x:x+.5,y:y+.5,amount:BALANCE.foodCapacity,timer:0};
         this.items.push(food);this.byCell.set(i,food);
       }
@@ -36,13 +36,20 @@ export class FoodSystem {
 
 /** Finite deposits. Timber regrows; stone stays depleted in this prototype. */
 export class MaterialSystem {
-  constructor(world,food){
+  constructor(world,food,woodThreshold=.03,stoneThreshold=.05){
     this.world=world;this.items=[];this.byCell=new Map();this.clock=0;this.dirty=true;this.routes={};
-    for(let i=0;i<world.tiles.length&&this.items.length+food.items.length<3000;i++){
+    const candidates=[];
+    for(let i=0;i<world.tiles.length;i++){
       if(world.tiles[i]!==2||food.byCell.has(i))continue;
       const x=i%world.width,y=Math.floor(i/world.width),r=world.hash(x+1973,y+3181);
-      const kind=r<.015?'wood':r<.025?'stone':null;
-      if(kind){const node={cell:i,x:x+.5,y:y+.5,kind,amount:kind==='wood'?8:12,timer:0};this.items.push(node);this.byCell.set(i,node);}
+      const kind=r<woodThreshold?'wood':r<stoneThreshold?'stone':null;
+      if(kind)candidates.push({cell:i,x:x+.5,y:y+.5,kind,amount:kind==='wood'?8:12,timer:0});
+    }
+    // Sample the whole map evenly if deposits exceed the shared resource cap.
+    const capacity=Math.max(0,3000-food.items.length);
+    for(let i=0;i<Math.min(capacity,candidates.length);i++){
+      const node=candidates.length<=capacity?candidates[i]:candidates[Math.floor((i+.5)*candidates.length/capacity)];
+      this.items.push(node);this.byCell.set(node.cell,node);
     }
     this.rebuild();
   }
