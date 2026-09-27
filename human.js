@@ -7,13 +7,15 @@ export class Human {
     this.deathCause=null;
     Object.assign(this,{id,name:`アソス${id}`,x,y,sex,age,hp:100,hunger:BALANCE.startingHunger,alive:true,
       action:'散歩中',angle:Math.random()*Math.PI*2,timer:0,mealTimer:0,waypoint:null,meals:0,
-      country:'アソス',spouseId:null,parentIds:[],children:[],ancestors:new Set(),nextBirthAt:0,dependent:false,
+      villageId:null,kingdomId:null,societyLock:false,cargo:null,country:'アソス',spouseId:null,parentIds:[],children:[],ancestors:new Set(),nextBirthAt:0,dependent:false,
       wood:0,stone:0,home:null,site:null,task:null,gatherTimer:0,path:null,destination:null});
   }
   get fullness(){return Math.max(0,Math.min(100,100-this.hunger));}
-  setTask(task){if(this.task!==task){this.task=task;this.waypoint=null;this.path=null;this.destination=null;this.gatherTimer=0;}}
-  update(dt,world,food,materials,buildings){
+  setTask(task){if(this.task!==task){this.task=task;this.waypoint=null;this.path=null;this.destination=null;this.gatherTimer=0;this.routeRetry=0;}}
+  update(dt,world,food,materials,buildings,society=null,people=[]){
     if(!this.alive)return;
+    // Passengers remain represented by their ship until they reach walkable land.
+    if(this.shipId){this.age+=dt/BALANCE.secondsPerYear;this.action='船で新天地へ移動中';return;}
     this.age+=dt/BALANCE.secondsPerYear;
     if(this.age>=this.deathAge){this.alive=false;this.deathCause='oldAge';this.action='老衰';buildings?.release(this);return;}
     if(this.mealTimer>0){this.mealTimer=Math.max(0,this.mealTimer-dt);this.action='食事中';if(this.mealTimer===0){this.hunger=Math.max(0,this.hunger-BALANCE.mealRecovery);this.meals++;}return;}
@@ -21,6 +23,7 @@ export class Human {
     if(this.hunger>=100)this.hp=Math.max(0,this.hp-BALANCE.starvationDamage*dt);
     else if(this.hunger<30)this.hp=Math.min(100,this.hp+BALANCE.healthRecovery*dt);
     if(this.hp<=0){this.alive=false;this.deathCause='starvation';this.action='餓死';buildings?.release(this);return;}
+    if(this.hunger>=BALANCE.seekFoodAt&&society?.eatFromStore(this,dt))return;
     if(this.hunger>=BALANCE.seekFoodAt&&food){
       this.setTask('food');this.action=this.hunger>=100?'飢餓・食料を探す':'食料を探す';
       const result=this.travelField(food.routes,dt,world);
@@ -29,12 +32,24 @@ export class Human {
       return;
     }
     if(materials&&buildings){
+      // Couples who migrated together share the first new home they build.
+      if(!this.home&&this.spouseId){
+        const spouse=people.find(p=>p.id===this.spouseId&&p.alive&&p.villageId===this.villageId);
+        if(spouse?.home?.complete){
+          if(this.site){buildings.release(this);this.site=null;}
+          this.home=spouse.home;
+        }else if(spouse&&this.id>spouse.id){
+          this.setTask('family-home');this.action='家族の家を待つ';this.wander(dt,world);return;
+        }
+      }
+      if(society?.work(this,dt,people))return;
       if(this.home){
         this.setTask('home');this.action='家へ帰る';
         if(this.travelTo(this.home.cell,dt,world))this.action='家で休む';
         return;
       }
       if(this.age<BALANCE.adultAge){this.setTask('child');this.action='遊んでいる';this.wander(dt,world);return;}
+      if(society?.supplyHouse(this,dt))return;
       const kind=this.wood<BALANCE.houseWood?'wood':this.stone<BALANCE.houseStone?'stone':null;
       if(kind){
         this.setTask(kind);const label=kind==='wood'?'木材':'石材';this.action=label+'を探す';
@@ -71,12 +86,13 @@ export class Human {
     this.follow(dt);return 'moving';
   }
   travelTo(goal,dt,world){
+    if(this.routeRetry>0){this.routeRetry-=dt;this.action='目的地へ行く道がない';return false;}
     if(this.waypoint){this.follow(dt);return false;}
     const cell=this.cell(world),center=this.center(cell,world);
     if(Math.hypot(center.x-this.x,center.y-this.y)>.01){this.waypoint=center;this.follow(dt);return false;}
     if(cell===goal)return true;
     if(this.destination!==goal||!this.path){this.destination=goal;this.path=findPath(world,cell,goal);}
-    if(!this.path?.length){this.action='目的地へ行く道がない';return false;}
+    if(!this.path?.length){this.routeRetry=2;this.action='目的地へ行く道がない';return false;}
     this.waypoint=this.center(this.path.shift(),world);this.follow(dt);return false;
   }
   follow(dt){const p=this.waypoint,dx=p.x-this.x,dy=p.y-this.y,d=Math.hypot(dx,dy),step=BALANCE.walkingSpeed*dt;if(d<=step){this.x=p.x;this.y=p.y;this.waypoint=null;}else{this.x+=dx/d*step;this.y+=dy/d*step;}}

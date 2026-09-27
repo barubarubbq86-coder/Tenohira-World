@@ -2,7 +2,7 @@
 export function neighbors(cell, world) {
   const x=cell%world.width,y=Math.floor(cell/world.width),w=world.width;
   return [x>0?cell-1:-1,x<w-1?cell+1:-1,y>0?cell-w:-1,y<world.height-1?cell+w:-1]
-    .filter(n=>n>=0&&(world.tiles[n]===1||world.tiles[n]===2));
+    .filter(n=>n>=0&&(world.tiles[n]===1||world.tiles[n]===2||world.tiles[n]===4));
 }
 export function routeField(world, sources) {
   const routes=new Int32Array(world.tiles.length);routes.fill(-1);

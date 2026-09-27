@@ -1,6 +1,7 @@
 /** Seeded value noise and domain-warped island terrain. No network assets. */
 export class World {
-  constructor(seed, width=240, height=160) {
+  constructor(seed, width=480, height=320) {
+    if(!Number.isInteger(width)||!Number.isInteger(height)||![[240,160],[480,320]].some(([w,h])=>w===width&&h===height))throw new RangeError('対応していない地図サイズです');
     this.seed=seed; this.width=width; this.height=height;
     this.tiles=new Uint8Array(width*height); this.elevation=new Float32Array(width*height);
     for(let y=0;y<height;y++) for(let x=0;x<width;x++) {
@@ -17,5 +18,5 @@ export class World {
   hash(x,y){let n=Math.imul(x,374761393)+Math.imul(y,668265263)+this.seed;n=Math.imul(n^(n>>>13),1274126177);return ((n^(n>>>16))>>>0)/4294967295;}
   noise(x,y){const a=Math.floor(x),b=Math.floor(y);let u=x-a,v=y-b;u=u*u*(3-2*u);v=v*v*(3-2*v);return (this.hash(a,b)*(1-u)+this.hash(a+1,b)*u)*(1-v)+(this.hash(a,b+1)*(1-u)+this.hash(a+1,b+1)*u)*v;}
   tile(x,y){if(x<0||y<0||x>=this.width||y>=this.height)return 0;return this.tiles[Math.floor(y)*this.width+Math.floor(x)];}
-  walkable(x,y){const t=this.tile(x,y);return t===1||t===2;}
+  walkable(x,y){const t=this.tile(x,y);return t===1||t===2||t===4;}
 }

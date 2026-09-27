@@ -6,14 +6,14 @@ export class FamilySystem {
     this.world=world;this.buildings=buildings;this.random=random;this.time=0;this.tick=0;this.births=0;
     this.news='18歳以上の男女と家がそろうと、結婚できます。';
     this.regions=new Int32Array(world.tiles.length);this.regions.fill(-1);let region=0;
-    for(let i=0;i<world.tiles.length;i++)if(this.regions[i]===-1&&(world.tiles[i]===1||world.tiles[i]===2)){
+    for(let i=0;i<world.tiles.length;i++)if(this.regions[i]===-1&&(world.tiles[i]===1||world.tiles[i]===2||world.tiles[i]===4)){
       const queue=[i];this.regions[i]=region;
       for(let j=0;j<queue.length;j++)for(const n of neighbors(queue[j],world))if(this.regions[n]===-1){this.regions[n]=region;queue.push(n);}
       region++;
     }
   }
   related(a,b){return a.ancestors.has(b.id)||b.ancestors.has(a.id)||[...a.ancestors].some(id=>b.ancestors.has(id));}
-  eligible(a,b){return a!==b&&a.alive&&b.alive&&!a.spouseId&&!b.spouseId&&a.age>=BALANCE.adultAge&&b.age>=BALANCE.adultAge&&a.sex!==b.sex&&a.country===b.country&&!this.related(a,b)&&this.regions[a.cell(this.world)]===this.regions[b.cell(this.world)]&&Math.hypot(a.x-b.x,a.y-b.y)<=BALANCE.marriageRadius&&!!(a.home||b.home);}
+  eligible(a,b){return a!==b&&a.alive&&b.alive&&!a.shipId&&!b.shipId&&!a.spouseId&&!b.spouseId&&a.age>=BALANCE.adultAge&&b.age>=BALANCE.adultAge&&a.sex!==b.sex&&a.country===b.country&&!this.related(a,b)&&this.regions[a.cell(this.world)]===this.regions[b.cell(this.world)]&&Math.hypot(a.x-b.x,a.y-b.y)<=BALANCE.marriageRadius&&!!(a.home||b.home);}
   marry(a,b,people){
     if(!this.eligible(a,b))return false;
     const home=a.home||b.home;
@@ -41,9 +41,9 @@ export class FamilySystem {
     for(const a of people){if(a.spouseId||a.age<BALANCE.adultAge)continue;const b=people.find(b=>this.eligible(a,b));if(b)this.marry(a,b,people);}
     // Each couple is processed once, using the mother's record.
     for(const mother of [...people]){
-      if(mother.sex!=='female'||mother.age<BALANCE.adultAge||mother.age>=BALANCE.birthMaxAge||!mother.spouseId||this.time<mother.nextBirthAt)continue;
+      if(mother.shipId||mother.sex!=='female'||mother.age<BALANCE.adultAge||mother.age>=BALANCE.birthMaxAge||!mother.spouseId||this.time<mother.nextBirthAt)continue;
       const father=byId.get(mother.spouseId),home=mother.home;
-      if(!father?.alive||father.spouseId!==mother.id||!home?.complete||father.home!==home||mother.fullness<55||father.fullness<55||mother.hp<50||father.hp<50)continue;
+      if(!father?.alive||father.shipId||father.spouseId!==mother.id||!home?.complete||father.home!==home||mother.fullness<55||father.fullness<55||mother.hp<50||father.hp<50)continue;
       if(Math.hypot(mother.x-home.x,mother.y-home.y)>3||Math.hypot(father.x-home.x,father.y-home.y)>3)continue;
       // Postpone the complete litter near the performance cap, preserving the odds.
       if(people.length>BALANCE.populationLimit-3)continue;
