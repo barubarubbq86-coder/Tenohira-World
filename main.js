@@ -12,15 +12,15 @@ import {serializeGame,restoreGame,expandLegacyWorld,MAX_SAVE_BYTES} from './save
 const $=id=>document.getElementById(id);
 class Game {
   constructor(){
-    this.canvas=$('world');this.ctx=this.canvas.getContext('2d');this.people=[];this.nextId=1;this.mode='move';this.paused=false;this.speed=1;this.simBacklog=0;this.pointers=new Map();this.scale=1;this.x=0;this.y=0;this.last=0;this.followId=null;this.detailSociety=null;this.audio=new GameAudio();this.lastNews=null;
+    this.canvas=$('world');this.ctx=this.canvas.getContext('2d');this.people=[];this.nextId=1;this.mode='move';this.paused=false;this.speed=1;this.simBacklog=0;this.actualSpeed=null;this.speedMeasureAt=0;this.pointers=new Map();this.scale=1;this.x=0;this.y=0;this.last=0;this.followId=null;this.detailSociety=null;this.audio=new GameAudio();this.audio.onStatus=()=>this.updateAudioStatus();this.lastNews=null;
     this.regenerate();this.bind();new ResizeObserver(()=>this.resize()).observe(this.canvas);requestAnimationFrame(t=>this.frame(t));
   }
   regenerate(empty=false){
-    this.world=new World(crypto.getRandomValues(new Uint32Array(1))[0]);if(empty){this.world.tiles.fill(0);this.world.elevation.fill(.2);}this.people=[];this.nextId=1;this.selected=null;this.deaths=0;this.oldAgeDeaths=0;this.elapsedSeconds=0;this.simBacklog=0;this.food=new FoodSystem(this.world);this.materials=new MaterialSystem(this.world,this.food);this.buildings=new BuildingSystem(this.world,this.food,this.materials);this.family=new FamilySystem(this.world,this.buildings);this.society=new SocietySystem(this.world,this.buildings,this.food,this.materials,this.family);this.meteor=new MeteorSystem();
+    this.world=new World(crypto.getRandomValues(new Uint32Array(1))[0]);if(empty){this.world.tiles.fill(0);this.world.elevation.fill(.2);}this.people=[];this.nextId=1;this.selected=null;this.deaths=0;this.oldAgeDeaths=0;this.elapsedSeconds=0;this.simBacklog=0;this.actualSpeed=null;this.speedMeasureAt=0;this.speedMeasureSeconds=0;this.food=new FoodSystem(this.world);this.materials=new MaterialSystem(this.world,this.food);this.buildings=new BuildingSystem(this.world,this.food,this.materials);this.family=new FamilySystem(this.world,this.buildings);this.society=new SocietySystem(this.world,this.buildings,this.food,this.materials,this.family);this.meteor=new MeteorSystem();
     this.lastNews=null;this.rebuildTerrain();
   }
   rebuildTerrain(){
-    this.societyRenderTime=null;
+    this.societyRenderAt=0;
     this.editor=new TerrainEditor(this.world);
     this.terrain=document.createElement('canvas');this.terrain.width=this.world.width*4;this.terrain.height=this.world.height*4;this.terrainCtx=this.terrain.getContext('2d');
     for(let i=0;i<this.world.tiles.length;i++)this.drawTerrainCell(i);
@@ -170,9 +170,20 @@ class Game {
       $('spouse').textContent=p.spouseId?`アソス${p.spouseId}`:'なし';$('parents').textContent=p.parentIds.length?p.parentIds.map(id=>`アソス${id}`).join('・'):'なし';$('children').textContent=p.children.length?`${p.children.length}人（${p.children.slice(-6).map(id=>`アソス${id}`).join('・')}${p.children.length>6?' ほか':''}）`:'なし';
     }
     const months=Math.floor(this.elapsedSeconds/BALANCE.secondsPerYear*12);
-    $('world-time').textContent=`${Math.floor(months/12)}年 ${months%12}か月`;
-    $('food-count').textContent=this.food.total;$('speed-label').textContent=`${this.speed}倍速`; $('deaths').textContent=this.deaths;$('old-age-deaths').textContent=this.oldAgeDeaths;$('houses').textContent=this.buildings.total;$('births').textContent=this.family.births;$('couples').textContent=this.people.filter(p=>p.spouseId).length/2;$('family-news').textContent=this.family.news;
-    if(this.societyRenderTime!==Math.floor(this.elapsedSeconds)){this.societyRenderTime=Math.floor(this.elapsedSeconds);this.renderSocieties();}
+    const day=Math.floor(this.elapsedSeconds%60/2);
+    $('world-time').textContent=`${Math.floor(months/12)}年 ${months%12}か月 ${day}日`;
+    $('food-count').textContent=this.food.total;$('speed-label').textContent=`${this.speed}倍速`;
+    $('speed-actual').textContent=this.paused?'一時停止中':this.actualSpeed===null?'実効速度を計測中':`実際 ${this.actualSpeed.toFixed(1)}倍`;
+    $('deaths').textContent=this.deaths;$('old-age-deaths').textContent=this.oldAgeDeaths;$('houses').textContent=this.buildings.total;$('births').textContent=this.family.births;$('couples').textContent=this.people.filter(p=>p.spouseId).length/2;$('family-news').textContent=this.family.news;
+    const now=performance.now();
+    if(!this.societyRenderAt||now-this.societyRenderAt>=1000){this.societyRenderAt=now;this.renderSocieties();}
+  }
+  updateAudioStatus(){
+    const button=$('music');
+    if(!button)return;
+    const labels={waiting:'♫ 音楽を再生',loading:'♫ 読み込み中',playing:'♫ 音楽 ON',paused:'♫ 一時停止中',off:'♫ 音楽 OFF',error:'♫ 再生できません · タップで再試行'};
+    button.textContent=labels[this.audio.status]??labels.waiting;
+    button.setAttribute('aria-pressed',String(this.audio.enabled));
   }
   renamePerson(){if(!this.selected)return;const next=prompt('人の名前',this.selected.name);if(next?.trim()){this.selected.name=next.trim().slice(0,40);this.updateInfo();this.renderSocieties();}}
   renderSocieties(){
@@ -204,7 +215,7 @@ class Game {
     }
   }
   cancelHold(){if(this.holdTimer){clearTimeout(this.holdTimer);this.holdTimer=null;}}
-  setPaused(paused){this.paused=paused;this.simBacklog=0;this.audio.setPaused(paused);$('pause').textContent=paused?'▷ 再開':'Ⅱ 一時停止';$('pause').setAttribute('aria-pressed',String(paused));}
+  setPaused(paused){this.paused=paused;this.simBacklog=0;this.actualSpeed=null;this.speedMeasureAt=0;this.audio.setPaused(paused);$('pause').textContent=paused?'▷ 再開':'Ⅱ 一時停止';$('pause').setAttribute('aria-pressed',String(paused));}
   saveFile(){
     try{
       this.finishPaint(false);const content=serializeGame(this);if(new TextEncoder().encode(content).length>MAX_SAVE_BYTES)throw new Error('保存データが大きすぎます');
@@ -237,11 +248,14 @@ class Game {
     this.message('海だけの世界になりました。指で陸地を描いてみよう');
   }
   bind(){
-    document.addEventListener('visibilitychange',()=>{this.last=0;this.simBacklog=0;});
-    document.addEventListener('pointerdown',()=>this.audio.unlock(),{once:true});
-    document.addEventListener('keydown',()=>this.audio.unlock(),{once:true});
+    document.addEventListener('visibilitychange',()=>{this.last=0;this.simBacklog=0;this.speedMeasureAt=0;if(!document.hidden&&this.audio.enabled&&(this.audio.status!=='playing'||this.audio.music.paused||this.audio.context?.state==='suspended'))this.audio.resume();});
+    document.addEventListener('pointerdown',e=>{if(!e.target.closest('#music'))this.audio.unlock();});
+    document.addEventListener('keydown',()=>this.audio.unlock());
     $('society-sort').onchange=()=>this.renderSocieties();
-    $('music').onclick=()=>{this.audio.setEnabled(!this.audio.enabled);$('music').textContent=this.audio.enabled?'♫ 音楽 ON':'♫ 音楽 OFF';$('music').setAttribute('aria-pressed',String(this.audio.enabled));};
+    $('music').onclick=()=>{
+      const stop=this.audio.enabled&&['playing','loading','paused'].includes(this.audio.status);
+      this.audio.setEnabled(!stop);
+    };
     for(const mode of ['move','place','land','resource','village','kingdom','invasion','independence','ship','meteor'])$(mode).onclick=()=>this.setMode(mode);
     $('clear-map').onclick=()=>{this.finishPaint(true);this.clearWasPaused=this.paused;this.setPaused(true);$('clear-confirm').showModal();};
     const cancelClear=()=>{this.setPaused(this.clearWasPaused);$('clear-confirm').close();};
@@ -287,7 +301,7 @@ class Game {
       if(leader&&name){leader.name=name.slice(0,40);this.renderSocieties();this.renderSocietyDetails();this.message(`${leader.name}の名前を更新しました`);}
     };
     $('plus').onclick=()=>this.zoom(1.4);$('minus').onclick=()=>this.zoom(1/1.4);$('fit').onclick=()=>this.fit();
-    $('pause').onclick=()=>this.setPaused(!this.paused);$('speed').onclick=()=>{this.speed=this.speed===1?2:this.speed===2?5:this.speed===5?10:1;this.audio.setSpeed(this.speed);this.updateInfo();this.message(`${this.speed}倍速で進みます`);};
+    $('pause').onclick=()=>this.setPaused(!this.paused);$('speed').onclick=()=>{this.speed=this.speed===1?2:this.speed===2?5:this.speed===5?10:1;this.actualSpeed=null;this.speedMeasureAt=0;this.audio.setSpeed(this.speed);this.updateInfo();this.message(`${this.speed}倍速を設定。実際の速度は数秒後に表示します`);};
     $('save-file').onclick=()=>this.saveFile();$('load-file').onclick=()=>$('load-input').click();$('load-input').onchange=e=>this.readSave(e.target.files[0]);
     const cancelLoad=()=>{this.pendingLoad=null;this.setPaused(this.loadWasPaused);$('load-confirm').close();};
     $('load-cancel').onclick=cancelLoad;$('load-confirm').addEventListener('cancel',e=>{e.preventDefault();cancelLoad();});
@@ -341,9 +355,15 @@ class Game {
       }
     }
     if(!document.hidden&&!this.paused){this.meteor.update(Math.min(realDt,.5),this);this.removeDead();}
+    if(!this.speedMeasureAt){this.speedMeasureAt=t;this.speedMeasureSeconds=this.elapsedSeconds;}
+    if(t-this.speedMeasureAt>=3000){
+      if(!this.paused&&!document.hidden)this.actualSpeed=(this.elapsedSeconds-this.speedMeasureSeconds)*1000/(t-this.speedMeasureAt);
+      this.speedMeasureAt=t;this.speedMeasureSeconds=this.elapsedSeconds;
+    }
     this.renderNews();
     this.updateFollow();if(!this.infoTime||t-this.infoTime>150){this.updateInfo();this.infoTime=t;}
-    this.draw();requestAnimationFrame(t=>this.frame(t));
+    if(!this.lastDraw||t-this.lastDraw>=33){this.draw();this.lastDraw=t;}
+    requestAnimationFrame(t=>this.frame(t));
   }
   removeDead(){
     const dead=this.people.filter(p=>!p.alive);

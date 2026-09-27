@@ -8,11 +8,14 @@ export class MeteorSystem {
     this.flights=[];
     this.sound=typeof Audio==='undefined'?null:new Audio('./assets/meteor-explosion.mp3');
     if(this.sound)this.sound.volume=.8;
+    this.image=typeof Image==='undefined'?null:new Image();
+    if(this.image)this.image.src='./assets/meteor.png';
   }
 
   launch(x,y,world){
     if(x<0||y<0||x>=world.width||y>=world.height||this.craters.length+this.meteors.length>=1000)return false;
-    this.meteors.push({x,y,age:0});
+    const angle=Math.atan2(y-world.height/2,x-world.width/2)+Math.PI;
+    this.meteors.push({x,y,age:0,angle});
     return true;
   }
 
@@ -73,7 +76,8 @@ export class MeteorSystem {
     game.refreshLand(cells);
     game.society.addNews(`隕石が落下。${deaths}人が亡くなり、周囲の資源が減りました。`);
     game.message(`隕石が落下！ ${deaths}人が死亡。クレーターは1年で草原になります`);
-    if(this.sound){this.sound.currentTime=0;this.sound.play().catch(()=>{});}
+    if(game.audio?.playMeteor)game.audio.playMeteor();
+    else if(this.sound){this.sound.currentTime=0;this.sound.play().catch(()=>{});}
   }
 
   draw(ctx,game){
@@ -86,12 +90,22 @@ export class MeteorSystem {
       ctx.fillStyle=gradient;ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.fill();
     }
     for(const meteor of this.meteors){
-      const p=point(meteor.x,meteor.y),size=Math.max(8,game.scale*3);
+      const p=point(meteor.x,meteor.y),size=Math.max(9,game.scale*7);
       if(meteor.age<.8){
         const progress=meteor.age/.8;
-        ctx.strokeStyle='#ff874d';ctx.lineWidth=Math.max(3,size*.5);
-        ctx.beginPath();ctx.moveTo(p.x-75*(1-progress),p.y-110*(1-progress));ctx.lineTo(p.x,p.y);ctx.stroke();
-        ctx.fillStyle='#e8ded0';ctx.beginPath();ctx.arc(p.x-75*(1-progress),p.y-110*(1-progress),size,0,Math.PI*2);ctx.fill();
+        const travel=Math.max(22,Math.min(game.w,game.h)*.32)*(1-progress);
+        const x=p.x-Math.cos(meteor.angle)*travel,y=p.y-Math.sin(meteor.angle)*travel;
+        const scale=.18+.98*progress,head=size*scale,width=head*4,height=head*2.7;
+        ctx.save();ctx.translate(x,y);ctx.rotate(meteor.angle+Math.PI);
+        ctx.globalAlpha=.45+.55*progress;
+        if(this.image?.complete&&this.image.naturalWidth){
+          // The source image is a transparent cutout of the user's meteor.
+          ctx.drawImage(this.image,574,319,554,378,-width*.23,-height*.5,width,height);
+        }else{
+          ctx.fillStyle='#8e001a';ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(width*.7,-head*.55);ctx.lineTo(width*.65,head*.55);ctx.fill();
+          ctx.fillStyle='#4b4d51';ctx.beginPath();ctx.arc(0,0,head,0,Math.PI*2);ctx.fill();
+        }
+        ctx.restore();
       }else{
         ctx.strokeStyle=`rgba(255,200,104,${Math.max(0,(1.3-meteor.age)*2)})`;
         ctx.lineWidth=4;ctx.beginPath();ctx.arc(p.x,p.y,(meteor.age-.8)*65+size,0,Math.PI*2);ctx.stroke();
