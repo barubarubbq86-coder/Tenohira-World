@@ -6,6 +6,10 @@ import {FamilySystem} from './family.js';
 import {BALANCE} from './settings.js';
 import {SocietySystem} from './society.js';
 import {MeteorSystem} from './meteor.js';
+import {BlackHoleSystem} from './black-hole.js';
+import {WeatherSystem} from './weather.js';
+import {TornadoSystem} from './tornado.js';
+import {AnimalSystem,ANIMAL_TYPES} from './animal.js';
 
 export const MAX_SAVE_BYTES=8*1024*1024;
 const MAGIC='tenohira-world';
@@ -17,7 +21,7 @@ const text=(v,max)=>{if(typeof v!=='string'||v.length>max)fail();return v;};
 
 /** A versioned world snapshot; runtime routes are reconstructed after validation. */
 export function serializeGame(g){
-  return JSON.stringify({format:MAGIC,version:6,seed:g.world.seed,width:g.world.width,height:g.world.height,terrain:Array.from(g.world.tiles),elevation:Array.from(g.world.elevation),elapsedSeconds:g.elapsedSeconds,
+  return JSON.stringify({format:MAGIC,version:11,seed:g.world.seed,width:g.world.width,height:g.world.height,terrain:Array.from(g.world.tiles),elevation:Array.from(g.world.elevation),elapsedSeconds:g.elapsedSeconds,
     nextId:g.nextId,deaths:g.deaths,oldAgeDeaths:g.oldAgeDeaths,
     food:g.food.items.map(f=>({cell:f.cell,amount:f.amount,timer:f.timer})),
     materials:g.materials.items.map(f=>({cell:f.cell,kind:f.kind,amount:f.amount,timer:f.timer})),
@@ -25,9 +29,15 @@ export function serializeGame(g){
     family:{time:g.family.time,tick:g.family.tick,births:g.family.births,news:g.family.news},
     society:{nextVillageId:g.society.nextVillageId,nextKingdomId:g.society.nextKingdomId,nextShipId:g.society.nextShipId,ageSeconds:g.society.ageSeconds,villages:g.society.villages,kingdoms:g.society.kingdoms,invasions:g.society.invasions,ships:g.society.ships,news:g.society.news},
     craters:g.meteor?.craters??[],
+    blackHoles:{nextId:g.blackHoles.nextId,holes:g.blackHoles.holes},
+    weather:{rain:g.weather.rain,lava:g.weather.lava,lavaCenter:g.weather.lavaCenter,wind:g.weather.wind,volcanoes:g.weather.volcanoes},
+    tornado:{nextId:g.tornado.nextId,storms:g.tornado.storms,moss:g.tornado.moss,debris:g.tornado.debris},
+    animals:{nextId:g.animals.nextId,items:g.animals.items.map(a=>({...a,ownerId:g.people.some(p=>p.alive&&p.id===a.ownerId)?a.ownerId:null}))},
     people:g.people.map(p=>({id:p.id,name:p.name,x:p.x,y:p.y,sex:p.sex,age:p.age,hp:p.hp,hunger:p.hunger,
       cargo:p.cargo,deathAge:p.deathAge,mealTimer:p.mealTimer,meals:p.meals,wood:p.wood,stone:p.stone,
       homeId:p.home?.id??null,siteId:p.site?.id??null,spouseId:p.spouseId,societyLock:p.societyLock===true,
+      swimming:p.swimming===true,swimLeft:p.swimming?p.swimLeft:0,swimShore:p.swimming?p.swimShore:null,
+      tornadoId:p.tornadoId??null,
       parentIds:p.parentIds,children:p.children,ancestors:[...p.ancestors],nextBirthAt:p.nextBirthAt,dependent:p.dependent})),
   });
 }
@@ -36,14 +46,14 @@ export function serializeGame(g){
 export function restoreGame(json){
   if(typeof json!=='string'||new TextEncoder().encode(json).length>MAX_SAVE_BYTES)fail();
   let data;try{data=JSON.parse(json);}catch{fail();}
-  if(!data||data.format!==MAGIC||![1,2,3,4,5,6].includes(data.version))fail();
+  if(!data||data.format!==MAGIC||![1,2,3,4,5,6,7,8,9,10,11].includes(data.version))fail();
   const width=data.version>=5?number(data.width,240,480,true):240;
   const height=data.version>=5?number(data.height,160,320,true):160;
   if(![[240,160],[480,320]].some(([w,h])=>w===width&&h===height))fail();
   const world=new World(number(data.seed,0,4294967295,true),width,height);
   if(data.version>=2){
     if(list(data.terrain,world.tiles.length).length!==world.tiles.length||list(data.elevation,world.tiles.length).length!==world.tiles.length)fail();
-    for(let i=0;i<world.tiles.length;i++){world.tiles[i]=number(data.terrain[i],0,4,true);world.elevation[i]=number(data.elevation[i],-2,2);}
+    for(let i=0;i<world.tiles.length;i++){world.tiles[i]=number(data.terrain[i],0,data.version>=8?6:4,true);world.elevation[i]=number(data.elevation[i],-2,2);}
   }
   // Versions 1 and 2 stored implicit resource positions. Recreate their
   // original density before applying the saved amounts.
@@ -81,7 +91,7 @@ export function restoreGame(json){
   const houses=new Map(),cells=new Set();
   for(const raw of list(data.buildings.items,5000)){
     if(!raw)fail();const id=number(raw.id,1,buildings.nextId-1,true),cell=number(raw.cell,0,world.tiles.length-1,true);
-    if(houses.has(id)||cells.has(cell)||(world.tiles[cell]!==2&&world.tiles[cell]!==4)||food.byCell.has(cell)||materials.byCell.has(cell))fail();
+    if(houses.has(id)||cells.has(cell)||![2,4,5,6].includes(world.tiles[cell])||food.byCell.has(cell)||materials.byCell.has(cell))fail();
     const cx=cell%world.width,cy=Math.floor(cell/world.width);
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       const x=cx+dx,y=cy+dy;
@@ -95,8 +105,11 @@ export function restoreGame(json){
   const ids=(values,max)=>{const out=list(values,max).map(personId);if(new Set(out).size!==out.length)fail();return out;};
   for(const raw of rawPeople){
     if(!raw)fail();const id=personId(raw.id),x=number(raw.x,0,world.width),y=number(raw.y,0,world.height);
-    if(byId.has(id)||!world.walkable(x,y)||!['male','female'].includes(raw.sex))fail();
+    const swimming=data.version>=7&&raw.swimming===true;
+    const tornadoId=data.version>=9&&raw.tornadoId!==null?number(raw.tornadoId,1,1e9,true):null;
+    if(byId.has(id)||(!world.walkable(x,y)&&!swimming&&!tornadoId)||!['male','female'].includes(raw.sex))fail();
     const p=new Human(id,x,y,raw.sex,0);p.name=text(raw.name,40);
+    p.tornadoId=tornadoId;
     p.age=number(raw.age,0,121);p.hp=number(raw.hp,0.000001,100);p.hunger=number(raw.hunger,0,100);
     p.deathAge=number(raw.deathAge,BALANCE.lifespanMin,BALANCE.lifespanMax);
     p.mealTimer=number(raw.mealTimer,0,BALANCE.mealSeconds);p.meals=number(raw.meals,0,1e9,true);
@@ -105,6 +118,14 @@ export function restoreGame(json){
     if(p.parentIds.includes(id)||p.children.includes(id)||p.ancestors.has(id)||p.parentIds.some(a=>!p.ancestors.has(a)))fail();
     p.spouseId=nullableId(raw.spouseId);if(p.spouseId===id)fail();p.societyLock=raw.societyLock===undefined?false:boolean(raw.societyLock);
     p.nextBirthAt=number(raw.nextBirthAt,0,1e10)*timeScale;p.dependent=boolean(raw.dependent);
+    if(swimming){
+      p.swimming=true;p.swimLeft=number(raw.swimLeft,0,16);
+      if(raw.swimShore!==null){
+        if(!raw.swimShore)fail();
+        const sx=number(raw.swimShore.x,0,world.width),sy=number(raw.swimShore.y,0,world.height);
+        p.swimShore={x:sx,y:sy};
+      }else p.swimShore=null;
+    }
     for(const [key,value] of [['home',raw.homeId],['site',raw.siteId]]){if(value===null)p[key]=null;else {number(value,1,buildings.nextId-1,true);p[key]=houses.get(value);if(!p[key])fail();}}
     if(p.home&&!p.home.complete)fail();
     if(p.site&&!p.site.complete&&p.site.ownerId!==id)fail();
@@ -125,7 +146,7 @@ export function restoreGame(json){
   if(data.version>=4){
     const raw=data.society;if(!raw)fail();society.nextVillageId=number(raw.nextVillageId,1,1e9,true);society.nextKingdomId=number(raw.nextKingdomId,1,1e9,true);society.nextShipId=raw.nextShipId===undefined?1:number(raw.nextShipId,1,1e9,true);society.ageSeconds=raw.ageSeconds===undefined?elapsedSeconds:number(raw.ageSeconds,0,1e10)*timeScale;
     const kingdomIds=new Set(),villageIds=new Set(),farmCells=new Set(),villageHouses=new Set();
-    for(const k of list(raw.kingdoms,2000)){const id=number(k.id,1,society.nextKingdomId-1,true);if(kingdomIds.has(id))fail();kingdomIds.add(id);const restored={id,name:text(k.name,40),leaderId:nullableId(k.leaderId)};if(k.nextSecessionAt!==undefined)restored.nextSecessionAt=number(k.nextSecessionAt,0,1e10)*timeScale;if(k.peaceUntil!==undefined)restored.peaceUntil=number(k.peaceUntil,0,1e10)*timeScale;if(k.cell!==undefined){const cell=number(k.cell,0,world.tiles.length-1,true);restored.cell=cell;restored.x=cell%world.width+.5;restored.y=Math.floor(cell/world.width)+.5;}if(k.capitalCell!==undefined){const cell=number(k.capitalCell,0,world.tiles.length-1,true);restored.capitalCell=cell;restored.castleCell=cell;restored.capitalX=cell%world.width+.5;restored.capitalY=Math.floor(cell/world.width)+.5;}if(k.castle){restored.castle={hp:number(k.castle.hp,0,1e9),maxHp:number(k.castle.maxHp,1,1e9)};}if(k.military){restored.military={soldiers:number(k.military.soldiers,0,1e9,true),attack:number(k.military.attack,0,1e9,true),defense:number(k.military.defense,0,1e9,true),food:number(k.military.food,0,9999,true),wood:number(k.military.wood,0,9999,true),stone:number(k.military.stone,0,9999,true)};}society.kingdoms.push(restored);}
+    for(const k of list(raw.kingdoms,2000)){const id=number(k.id,1,society.nextKingdomId-1,true);if(kingdomIds.has(id))fail();kingdomIds.add(id);const restored={id,name:text(k.name,40),leaderId:nullableId(k.leaderId)};if(k.nextSecessionAt!==undefined)restored.nextSecessionAt=number(k.nextSecessionAt,0,1e10)*timeScale;if(k.peaceUntil!==undefined)restored.peaceUntil=number(k.peaceUntil,0,1e10)*timeScale;if(k.cell!==undefined){const cell=number(k.cell,0,world.tiles.length-1,true);restored.cell=cell;restored.x=cell%world.width+.5;restored.y=Math.floor(cell/world.width)+.5;}if(k.capitalCell!==undefined){const cell=number(k.capitalCell,0,world.tiles.length-1,true);restored.capitalCell=cell;restored.castleCell=cell;restored.capitalX=cell%world.width+.5;restored.capitalY=Math.floor(cell/world.width)+.5;}if(k.castle){restored.castle={hp:number(k.castle.hp,0,1e9),maxHp:number(k.castle.maxHp,1,1e9)};}if(k.military){restored.military={soldiers:number(k.military.soldiers,0,1e9,true),attack:number(k.military.attack,0,1e9,true),defense:number(k.military.defense,0,1e9,true),food:number(k.military.food,0,9999,true),wood:number(k.military.wood,0,9999,true),stone:number(k.military.stone,0,9999,true)};}if(data.version>=11&&k.god!==undefined){restored.god=boolean(k.god);if(restored.god){restored.godActive=boolean(k.godActive);restored.godNextAt=number(k.godNextAt,0,1e10);}}society.kingdoms.push(restored);}
     for(const v of list(raw.villages,2000)){
       const id=number(v.id,1,society.nextVillageId-1,true),cell=number(v.cell,0,world.tiles.length-1,true);
       if(villageIds.has(id)||!world.walkable(cell%world.width+.5,Math.floor(cell/world.width)+.5))fail();villageIds.add(id);
@@ -180,7 +201,71 @@ export function restoreGame(json){
       return {x,y,cells,expiresAt:number(c.expiresAt,elapsedSeconds,elapsedSeconds+BALANCE.secondsPerYear)};
     });
   }
-  return {world,food,materials,buildings,family,society,meteor,people,nextId,deaths,oldAgeDeaths,elapsedSeconds};
+  const blackHoles=new BlackHoleSystem();
+  if(data.version>=7){
+    if(!data.blackHoles)fail();
+    blackHoles.nextId=number(data.blackHoles.nextId,1,1e9,true);
+    const ids=new Set();
+    blackHoles.holes=list(data.blackHoles.holes,4).map(raw=>{
+      const id=number(raw.id,1,blackHoles.nextId-1,true),x=number(raw.x,0,world.width),y=number(raw.y,0,world.height);
+      if(ids.has(id)||!['people','land','all'].includes(raw.kind))fail();ids.add(id);
+      const radius=raw.kind==='people'?8:6;
+      return {id,x,y,kind:raw.kind,radius,landRadius:number(raw.landRadius,0,radius,true)};
+    });
+  }
+  const weather=new WeatherSystem();
+  if(data.version>=8){
+    const raw=data.weather;if(!raw)fail();
+    weather.rain=boolean(raw.rain);weather.lava=boolean(raw.lava);
+    const position=p=>{
+      if(p===null)return null;if(!p)fail();
+      return {x:number(p.x,0,world.width),y:number(p.y,0,world.height)};
+    };
+    weather.lavaCenter=position(raw.lavaCenter);
+    if(weather.lava&&!weather.lavaCenter)fail();
+    if(raw.wind!==null){
+      if(!raw.wind)fail();
+      weather.wind={dx:number(raw.wind.dx,-1,1),dy:number(raw.wind.dy,-1,1),left:number(raw.wind.left,0,12)};
+    }
+    weather.volcanoes=list(raw.volcanoes,16).map(v=>{
+      if(!v||!['volcano','reverse'].includes(v.kind))fail();
+      return {...position(v),kind:v.kind};
+    });
+  }
+  const tornado=new TornadoSystem();
+  if(data.version>=9){
+    const raw=data.tornado;if(!raw)fail();
+    tornado.nextId=number(raw.nextId,1,1e9,true);
+    const ids=new Set();
+    const point=(p)=>{
+      if(!p)fail();return {x:number(p.x,0,world.width),y:number(p.y,0,world.height)};
+    };
+    tornado.storms=list(raw.storms,2).map(s=>{
+      const id=number(s.id,1,tornado.nextId-1,true);
+      if(ids.has(id)||!['normal','strong'].includes(s.kind))fail();ids.add(id);
+      return {id,kind:s.kind,...point(s),startX:number(s.startX,0,world.width),startY:number(s.startY,0,world.height),toX:number(s.toX,0,world.width),toY:number(s.toY,0,world.height),age:number(s.age,0,1e8),closing:boolean(s.closing),shrink:number(s.shrink,0,1),houseClock:number(s.houseClock,0,1)};
+    });
+    tornado.moss=list(raw.moss,80).map(m=>{const p=point(m);if(!world.walkable(p.x,p.y))fail();return p;});
+    tornado.debris=list(raw.debris,30).map(d=>({ ...point(d),toX:number(d.toX,0,world.width),toY:number(d.toY,0,world.height),age:number(d.age,0,2)}));
+    for(const p of people)if(p.tornadoId&&!ids.has(p.tornadoId))fail();
+  }
+  const animals=new AnimalSystem();
+  if(data.version>=10){
+    if(!data.animals)fail();
+    animals.nextId=number(data.animals.nextId,1,1e9,true);
+    const ids=new Set(),personIds=new Set(people.map(p=>p.id));
+    animals.items=list(data.animals.items,200).map(raw=>{
+      if(!raw||!Object.hasOwn(ANIMAL_TYPES,raw.kind))fail();
+      const id=number(raw.id,1,animals.nextId-1,true);
+      if(ids.has(id))fail();ids.add(id);
+      const ownerId=raw.ownerId===null?null:number(raw.ownerId,1,nextId-1,true);
+      if(ownerId!==null&&!personIds.has(ownerId))fail();
+      return {id,kind:raw.kind,x:number(raw.x,0,world.width),y:number(raw.y,0,world.height),
+        angle:number(raw.angle,-100,100),turn:number(raw.turn,-1e5,1e5),
+        landTime:number(raw.landTime,0,100),attack:number(raw.attack,-1e5,1e5),ownerId};
+    });
+  }
+  return {world,food,materials,buildings,family,society,meteor,blackHoles,weather,tornado,animals,people,nextId,deaths,oldAgeDeaths,elapsedSeconds};
 }
 
 /** Surround a legacy world with editable sea while preserving its objects. */
@@ -222,6 +307,7 @@ export function expandLegacyWorld(state){
   for(const p of state.people){
     movePoint(p);p.task=null;p.waypoint=null;p.path=null;p.destination=null;
   }
+  for(const a of state.animals.items)movePoint(a);
   society.update(0,state.people,true);
   return {...state,world,food,materials,buildings,family,society};
 }

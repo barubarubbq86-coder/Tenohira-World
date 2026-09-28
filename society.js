@@ -10,7 +10,7 @@ export class SocietySystem {
   kingdomRadius(){return this.ageSeconds<BALANCE.secondsPerYear*BALANCE.kingdomExpansionYears?BALANCE.kingdomInitialRadius:BALANCE.kingdomRadius;}
   walkableNear(cell){if(cell!==null&&cell!==undefined){const cx=cell%this.world.width,cy=Math.floor(cell/this.world.width);for(let radius=0;radius<=12;radius++)for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++){const x=cx+dx,y=cy+dy;if(x<0||y<0||x>=this.world.width||y>=this.world.height)continue;const next=y*this.world.width+x;if(this.world.walkable(x+.5,y+.5))return next;}}return null;}
   syncMilitary(people){
-    for(const k of this.kingdoms){const stock=this.kingdomStock(k.id),population=people.filter(p=>p.alive&&p.kingdomId===k.id).length,soldiers=Math.min(population,Math.floor(stock.food/10+stock.wood/5+stock.stone/5));k.military={soldiers,attack:soldiers*2+Math.floor(stock.stone/4),defense:soldiers+Math.floor(stock.wood/4),food:stock.food,wood:stock.wood,stone:stock.stone};const maxHp=100+population*5+Math.floor(stock.stone/2);if(!k.castle)k.castle={hp:maxHp,maxHp};else{k.castle.hp=Math.min(maxHp,k.castle.hp+(maxHp-k.castle.maxHp));k.castle.maxHp=maxHp;}}
+    for(const k of this.kingdoms){const stock=this.kingdomStock(k.id),population=people.filter(p=>p.alive&&p.kingdomId===k.id).length,soldiers=Math.min(population,Math.floor(stock.food/10+stock.wood/5+stock.stone/5));const stoneSpear=this.ageSeconds>=15*BALANCE.secondsPerYear;k.military={soldiers,attack:soldiers*(stoneSpear?3:2)+Math.floor(stock.stone/4),defense:soldiers+Math.floor(stock.wood/4),food:stock.food,wood:stock.wood,stone:stock.stone};const maxHp=100+population*5+Math.floor(stock.stone/2);if(!k.castle)k.castle={hp:maxHp,maxHp};else{k.castle.hp=Math.min(maxHp,k.castle.hp+(maxHp-k.castle.maxHp));k.castle.maxHp=maxHp;}}
   }
   takeKingdomStock(k,need){const villages=this.villages.filter(v=>v.kingdomId===k.id);for(const key of Object.keys(need))if(this.kingdomStock(k.id)[key]<need[key])return false;for(const key of Object.keys(need)){let left=need[key];for(const v of villages){const used=Math.min(left,v.stock[key]);v.stock[key]-=used;left-=used;if(!left)break;}}return true;}
   findUnclaimedLand(origin,overseas=false){const originRegion=origin?this.region(Math.floor(origin.y)*this.world.width+Math.floor(origin.x)):null;for(let distance=30;distance<=this.world.width;distance+=10)for(let angle=0;angle<Math.PI*2;angle+=Math.PI/4){const x=origin.x+Math.cos(angle)*distance,y=origin.y+Math.sin(angle)*distance;if(x<2||y<2||x>=this.world.width-2||y>=this.world.height-2||!this.world.walkable(x,y))continue;const cell=Math.floor(y)*this.world.width+Math.floor(x);if(overseas&&this.region(cell)===originRegion)continue;if(this.villages.some(v=>Math.hypot(v.x-x,v.y-y)<BALANCE.villageRadius*2)||this.buildings.items.some(h=>Math.hypot(h.x-x,h.y-y)<BALANCE.villageRadius))continue;return {x,y};}return null;}
@@ -100,6 +100,7 @@ export class SocietySystem {
   }
   updateSecession(people){
     for(const k of [...this.kingdoms]){
+      if(k.god)continue;
       const owned=this.villages.filter(v=>v.kingdomId===k.id);
       const population=owned.reduce((total,v)=>total+this.members(v,people).length,0);
       if(population<45||this.invasions.some(i=>i.targetType==='kingdom'&&i.targetId===k.id))continue;

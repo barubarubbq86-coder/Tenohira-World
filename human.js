@@ -12,10 +12,33 @@ export class Human {
   }
   get fullness(){return Math.max(0,Math.min(100,100-this.hunger));}
   setTask(task){if(this.task!==task){this.task=task;this.waypoint=null;this.path=null;this.destination=null;this.gatherTimer=0;this.routeRetry=0;}}
-  update(dt,world,food,materials,buildings,society=null,people=[]){
+  update(dt,world,food,materials,buildings,society=null,people=[],animals=null,town=null,game=null){
     if(!this.alive)return;
     // Passengers remain represented by their ship until they reach walkable land.
     if(this.shipId){this.age+=dt/BALANCE.secondsPerYear;this.action='船で新天地へ移動中';return;}
+    if(this.tornadoId){this.age+=dt/BALANCE.secondsPerYear;this.action='台風に巻き込まれている';return;}
+    if(this.tornadoFlee>0){this.tornadoFlee=Math.max(0,this.tornadoFlee-dt);this.age+=dt/BALANCE.secondsPerYear;this.action='台風から逃げる';return;}
+    if(this.slipLeft>0){
+      this.slipLeft=Math.max(0,this.slipLeft-dt);this.age+=dt/BALANCE.secondsPerYear;
+      const step=dt*3.1,x=this.x+Math.cos(this.slipAngle)*step,y=this.y+Math.sin(this.slipAngle)*step;
+      if(world.walkable(x,y)){this.x=x;this.y=y;}
+      this.action='コケで滑った';return;
+    }
+    if(this.swimming){
+      this.swimLeft-=dt;this.age+=dt/BALANCE.secondsPerYear;
+      const shore=this.swimShore;
+      if(shore){
+        const distance=Math.hypot(shore.x-this.x,shore.y-this.y);
+        const step=Math.min(distance,dt*1.45);
+        if(distance>0){this.x+=(shore.x-this.x)/distance*step;this.y+=(shore.y-this.y)/distance*step;}
+      }
+      if(world.walkable(this.x,this.y)){
+        this.swimming=false;this.swimShore=null;this.swimLeft=0;this.action='岸にたどり着いた';
+        this.home=null;this.site=null;this.setTask(null);
+      }else if(this.swimLeft<=0){this.alive=false;this.deathCause='drowning';this.action='溺死';}
+      else this.action='岸へ泳いでいる';
+      return;
+    }
     this.age+=dt/BALANCE.secondsPerYear;
     if(this.age>=this.deathAge){this.alive=false;this.deathCause='oldAge';this.action='老衰';buildings?.release(this);return;}
     if(this.mealTimer>0){this.mealTimer=Math.max(0,this.mealTimer-dt);this.action='食事中';if(this.mealTimer===0){this.hunger=Math.max(0,this.hunger-BALANCE.mealRecovery);this.meals++;}return;}
@@ -24,6 +47,7 @@ export class Human {
     else if(this.hunger<30)this.hp=Math.min(100,this.hp+BALANCE.healthRecovery*dt);
     if(this.hp<=0){this.alive=false;this.deathCause='starvation';this.action='餓死';buildings?.release(this);return;}
     if(this.hunger>=BALANCE.seekFoodAt&&society?.eatFromStore(this,dt))return;
+    if(this.hunger>=BALANCE.seekFoodAt&&animals?.tryHunt(this,dt,world,society))return;
     if(this.hunger>=BALANCE.seekFoodAt&&food){
       this.setTask('food');this.action=this.hunger>=100?'飢餓・食料を探す':'食料を探す';
       const result=this.travelField(food.routes,dt,world);
@@ -42,6 +66,8 @@ export class Human {
           this.setTask('family-home');this.action='家族の家を待つ';this.wander(dt,world);return;
         }
       }
+      if(animals?.stockVillage(this,dt,world,society))return;
+      if(town?.visit(this,dt,game))return;
       if(society?.work(this,dt,people))return;
       if(this.home){
         this.setTask('home');this.action='家へ帰る';
@@ -95,6 +121,6 @@ export class Human {
     if(!this.path?.length){this.routeRetry=2;this.action='目的地へ行く道がない';return false;}
     this.waypoint=this.center(this.path.shift(),world);this.follow(dt);return false;
   }
-  follow(dt){const p=this.waypoint,dx=p.x-this.x,dy=p.y-this.y,d=Math.hypot(dx,dy),step=BALANCE.walkingSpeed*dt;if(d<=step){this.x=p.x;this.y=p.y;this.waypoint=null;}else{this.x+=dx/d*step;this.y+=dy/d*step;}}
-  wander(dt,world){this.timer-=dt;if(this.timer<=0){this.angle+=(Math.random()-.5)*3;this.timer=.5+Math.random()*2;}const x=this.x+Math.cos(this.angle)*dt*BALANCE.walkingSpeed,y=this.y+Math.sin(this.angle)*dt*BALANCE.walkingSpeed;if(world.walkable(x,y)){this.x=x;this.y=y;}else{this.angle+=Math.PI*.6;this.timer=.2;}}
+  follow(dt){const p=this.waypoint,dx=p.x-this.x,dy=p.y-this.y,d=Math.hypot(dx,dy),step=BALANCE.walkingSpeed*dt*(this.weatherSlow??1);if(d<=step){this.x=p.x;this.y=p.y;this.waypoint=null;}else{this.x+=dx/d*step;this.y+=dy/d*step;}}
+  wander(dt,world){this.timer-=dt;if(this.timer<=0){this.angle+=(Math.random()-.5)*3;this.timer=.5+Math.random()*2;}const step=dt*BALANCE.walkingSpeed*(this.weatherSlow??1),x=this.x+Math.cos(this.angle)*step,y=this.y+Math.sin(this.angle)*step;if(world.walkable(x,y)){this.x=x;this.y=y;}else{this.angle+=Math.PI*.6;this.timer=.2;}}
 }

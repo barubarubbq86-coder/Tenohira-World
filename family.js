@@ -6,7 +6,7 @@ export class FamilySystem {
     this.world=world;this.buildings=buildings;this.random=random;this.time=0;this.tick=0;this.births=0;
     this.news='18歳以上の男女と家がそろうと、結婚できます。';
     this.regions=new Int32Array(world.tiles.length);this.regions.fill(-1);let region=0;
-    for(let i=0;i<world.tiles.length;i++)if(this.regions[i]===-1&&(world.tiles[i]===1||world.tiles[i]===2||world.tiles[i]===4)){
+    for(let i=0;i<world.tiles.length;i++)if(this.regions[i]===-1&&world.walkable(i%world.width+.5,Math.floor(i/world.width)+.5)){
       const queue=[i];this.regions[i]=region;
       for(let j=0;j<queue.length;j++)for(const n of neighbors(queue[j],world))if(this.regions[n]===-1){this.regions[n]=region;queue.push(n);}
       region++;

@@ -8,7 +8,7 @@ export class TerrainEditor {
       if(Math.hypot(px+.5-x,py+.5-y)>this.radius)continue;
       const i=py*w.width+px;if(w.tiles[i]===this.terrain||this.protectedCells.has(i))continue;
       if(!this.original.has(i))this.original.set(i,{tile:w.tiles[i],height:w.elevation[i]});
-      w.tiles[i]=this.terrain;w.elevation[i]=[.2,.48,.56,.76,.57][this.terrain];changed.push(i);
+      w.tiles[i]=this.terrain;w.elevation[i]=[.2,.48,.56,.76,.57,.58,.52][this.terrain];changed.push(i);
     }
     return changed;
   }

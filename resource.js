@@ -20,7 +20,7 @@ export class FoodSystem {
     while(head<tail){const i=queue[head++],x=i%w,y=Math.floor(i/w);
       for(const n of [x>0?i-1:-1,x<w-1?i+1:-1,y>0?i-w:-1,y<h-1?i+w:-1]){
         if(n<0||this.routes[n]!==-1)continue;
-        const t=this.world.tiles[n];if(t!==1&&t!==2&&t!==4)continue;
+        if(!this.world.walkable(n%w+.5,Math.floor(n/w)+.5))continue;
         this.routes[n]=i;queue[tail++]=n;
       }
     }
@@ -40,7 +40,7 @@ export class MaterialSystem {
     this.world=world;this.items=[];this.byCell=new Map();this.clock=0;this.dirty=true;this.routes={};
     const candidates=[];
     for(let i=0;i<world.tiles.length;i++){
-      if(world.tiles[i]!==2||food.byCell.has(i))continue;
+      if(world.tiles[i]!==2&&world.tiles[i]!==5||food.byCell.has(i))continue;
       const x=i%world.width,y=Math.floor(i/world.width),r=world.hash(x+1973,y+3181);
       const kind=r<woodThreshold?'wood':r<stoneThreshold?'stone':null;
       if(kind)candidates.push({cell:i,x:x+.5,y:y+.5,kind,amount:kind==='wood'?8:12,timer:0});
