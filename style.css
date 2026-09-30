@@ -83,3 +83,20 @@
   width:min(286px,76vw);max-height:min(38svh,340px);padding:10px}
   #society-detail .detail-head{top:-10px;margin:-10px -10px 8px;padding:8px 10px}
   #society-detail .detail-head h2{font-size:15px}}
+
+/* Creature details stay visible during tap commands without covering the world. */
+#person{position:fixed;right:18px;top:clamp(100px,17svh,165px);z-index:19;
+  width:min(330px,42vw);max-height:min(47svh,410px);overflow-y:auto;
+  background:rgba(19,45,54,.85);box-shadow:0 10px 24px #091b28aa;
+  overscroll-behavior:contain}
+#person .person-title{justify-content:flex-start}
+#person .person-title strong{flex:1;min-width:75px}
+#person .person-title button{font-size:13px;min-height:42px;padding:5px 9px}
+#person #close-person{font-size:22px;padding:1px 10px}
+#control-creature[aria-pressed="true"]{background:#f1dd8f;color:#22353b;font-weight:700}
+#control-help{margin:8px 0;padding:8px 10px;background:#d3ac6280;border-radius:7px;font-size:13px;line-height:1.45}
+#control-help[hidden],#person [hidden]{display:none}
+@media(max-width:600px){#person{right:9px;top:clamp(100px,17svh,145px);
+  width:min(280px,76vw);max-height:min(34svh,295px);padding:9px}
+  #person .person-title{flex-wrap:wrap}#person .person-title strong{flex:1 0 58%}
+  #person .person-title button{min-height:39px}#person #close-person{order:0}}

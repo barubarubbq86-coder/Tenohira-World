@@ -46,6 +46,21 @@ export class Human {
     if(this.hunger>=100)this.hp=Math.max(0,this.hp-BALANCE.starvationDamage*dt);
     else if(this.hunger<30)this.hp=Math.min(100,this.hp+BALANCE.healthRecovery*dt);
     if(this.hp<=0){this.alive=false;this.deathCause='starvation';this.action='餓死';buildings?.release(this);return;}
+    // A player order temporarily replaces routine work; survival still runs above.
+    if(this.manualTarget){
+      const target=this.manualTarget,cell=target.cell;
+      this.setTask(`manual-${cell}`);
+      this.action=target.kind==='food'?'指示された食料へ移動中':target.kind==='wood'||target.kind==='stone'?'指示された資源へ移動中':'指示された場所へ移動中';
+      if(this.travelTo(cell,dt,world)){
+        if(target.kind==='food'&&food?.take(cell)){
+          this.hunger=Math.max(0,this.hunger-45);this.meals++;this.action='指示された食料を食べた';
+        }else if((target.kind==='wood'||target.kind==='stone')&&materials?.take(cell,target.kind)){
+          this[target.kind]++;this.action=`${target.kind==='wood'?'木':'石'}を採集した`;
+        }else this.action='指示された場所に到着した';
+        this.manualTarget=null;this.setTask(null);
+      }
+      return;
+    }
     if(this.hunger>=BALANCE.seekFoodAt&&society?.eatFromStore(this,dt))return;
     if(this.hunger>=BALANCE.seekFoodAt&&animals?.tryHunt(this,dt,world,society))return;
     if(this.hunger>=BALANCE.seekFoodAt&&food){

@@ -8,6 +8,7 @@ import {SocietySystem} from './society.js';
 import {TerrainEditor} from './terrain-editor.js';
 import {GameAudio} from './audio.js';
 import {MeteorSystem} from './meteor.js';
+import {BigBangSystem} from './big-bang.js';
 import {BlackHoleSystem} from './black-hole.js';
 import {WeatherSystem} from './weather.js';
 import {TornadoSystem} from './tornado.js';
@@ -19,13 +20,13 @@ import {serializeGame,restoreGame,MAX_SAVE_BYTES} from './save.js';
 const $=id=>document.getElementById(id);
 class Game {
   constructor(){
-    this.canvas=$('world');this.ctx=this.canvas.getContext('2d');this.people=[];this.nextId=1;this.mode='move';this.paused=false;this.speed=1;this.simBacklog=0;this.actualSpeed=null;this.speedMeasureAt=0;this.pointers=new Map();this.scale=1;this.x=0;this.y=0;this.last=0;this.followId=null;this.detailSociety=null;this.audio=new GameAudio();this.audio.onStatus=()=>this.updateAudioStatus();this.lastNews=null;
+    this.canvas=$('world');this.ctx=this.canvas.getContext('2d');this.people=[];this.nextId=1;this.mode='move';this.paused=false;this.speed=1;this.simBacklog=0;this.actualSpeed=null;this.speedMeasureAt=0;this.pointers=new Map();this.scale=1;this.x=0;this.y=0;this.last=0;this.followId=null;this.detailSociety=null;this.controlled=null;this.selectedAnimal=null;this.audio=new GameAudio();this.audio.onStatus=()=>this.updateAudioStatus();this.lastNews=null;
     this.regenerate();this.bind();new ResizeObserver(()=>this.resize()).observe(this.canvas);requestAnimationFrame(t=>this.frame(t));
   }
   regenerate(empty=false){
     if($('society-detail')?.open)$('society-detail').close();
-    this.world=new World(crypto.getRandomValues(new Uint32Array(1))[0]);if(empty){this.world.tiles.fill(0);this.world.elevation.fill(.2);}this.people=[];this.nextId=1;this.selected=null;this.deaths=0;this.oldAgeDeaths=0;this.elapsedSeconds=0;this.simBacklog=0;this.actualSpeed=null;this.speedMeasureAt=0;this.speedMeasureSeconds=0;this.food=new FoodSystem(this.world);this.materials=new MaterialSystem(this.world,this.food);this.buildings=new BuildingSystem(this.world,this.food,this.materials);this.family=new FamilySystem(this.world,this.buildings);this.society=new SocietySystem(this.world,this.buildings,this.food,this.materials,this.family);this.meteor=new MeteorSystem();
-    this.blackHoles=new BlackHoleSystem();this.weather=new WeatherSystem();this.tornado=new TornadoSystem();this.animals=new AnimalSystem();this.town=new TownSystem();this.gods=new GodSystem();this.lastNews=null;this.rebuildTerrain();
+    this.world=new World(crypto.getRandomValues(new Uint32Array(1))[0]);if(empty){this.world.tiles.fill(0);this.world.elevation.fill(.2);}this.people=[];this.nextId=1;this.selected=null;this.selectedAnimal=null;this.controlled=null;this.deaths=0;this.oldAgeDeaths=0;this.elapsedSeconds=0;this.simBacklog=0;this.actualSpeed=null;this.speedMeasureAt=0;this.speedMeasureSeconds=0;this.food=new FoodSystem(this.world);this.materials=new MaterialSystem(this.world,this.food);this.buildings=new BuildingSystem(this.world,this.food,this.materials);this.family=new FamilySystem(this.world,this.buildings);this.society=new SocietySystem(this.world,this.buildings,this.food,this.materials,this.family);this.meteor=new MeteorSystem();
+    this.blackHoles=new BlackHoleSystem();this.bigBang=new BigBangSystem();this.bigBangPreview=null;this.weather=new WeatherSystem();this.tornado=new TornadoSystem();this.animals=new AnimalSystem();this.town=new TownSystem();this.gods=new GodSystem();this.lastNews=null;this.rebuildTerrain();
   }
   rebuildTerrain(){
     this.town?.clear();
@@ -277,13 +278,33 @@ class Game {
     const radius=22/this.scale;
     const nearby=this.people.filter(p=>!p.shipId&&Math.hypot(p.x-x,p.y-y)<radius)
       .sort((a,b)=>Math.hypot(a.x-x,a.y-y)-Math.hypot(b.x-x,b.y-y)||a.id-b.id);
-    const current=nearby.indexOf(this.selected);
-    this.selected=nearby.length?nearby[(current+1)%nearby.length]:null;this.updateInfo();
-    if(!nearby.length){const animal=this.animals.items.find(a=>Math.hypot(a.x-x,a.y-y)<radius);this.message(animal?`${ANIMAL_TYPES[animal.kind].name}${animal.ownerId?' · 飼い主 '+(this.people.find(p=>p.id===animal.ownerId)?.name??'なし'):''}`:'人や動物をタップすると、状態を見られます');}
+    const current=nearby.indexOf(this.selected),animals=this.animals.items.filter(a=>Math.hypot(a.x-x,a.y-y)<radius)
+      .sort((a,b)=>Math.hypot(a.x-x,a.y-y)-Math.hypot(b.x-x,b.y-y));
+    const nearestAnimal=animals[0],chooseAnimal=nearestAnimal&&
+      (!nearby.length||Math.hypot(nearestAnimal.x-x,nearestAnimal.y-y)<Math.hypot(nearby[0].x-x,nearby[0].y-y));
+    this.selected=chooseAnimal?null:nearby.length?nearby[(current+1)%nearby.length]:null;
+    this.selectedAnimal=chooseAnimal?nearestAnimal:this.selected?null:nearestAnimal??null;
+    this.updateInfo();
+    if(this.selectedAnimal)this.message(`${ANIMAL_TYPES[this.selectedAnimal.kind].name}を選択しました。「操る」で指示できます`);
+    else if(!nearby.length)this.message('人や動物をタップすると、状態を見られます');
     else if(nearby.length>1)this.message('同じ場所をもう一度タップすると、別の人を選べます');
+    return !!(this.selected||this.selectedAnimal);
   }
   updateInfo(){
-    const p=this.selected,panel=$('person');panel.hidden=!p;
+    if(this.selected&&(!this.selected.alive||!this.people.includes(this.selected)))this.selected=null;
+    if(this.selectedAnimal&&!this.animals.items.includes(this.selectedAnimal))this.selectedAnimal=null;
+    if(this.controlled&&!(this.controlled.type==='human'?this.people.some(p=>p.id===this.controlled.id&&p.alive):this.animals.items.some(a=>a.id===this.controlled.id)))this.controlled=null;
+    const p=this.selected,panel=$('person'),a=this.selectedAnimal;
+    panel.hidden=!(p||a);
+    $('rename-person').hidden=!p;$('person-age-line').hidden=!p;$('person-inventory').hidden=!p;$('person-family').hidden=!p;
+    $('affiliation').hidden=!p;$('health').parentElement.hidden=!p;$('fullness').parentElement.hidden=!p;
+    $('control-creature').hidden=!(p||a);
+    const controlling=!!this.controlled&&this.controlled.type===(p?'human':'animal')&&this.controlled.id===(p?.id??a?.id);
+    $('control-creature').textContent=controlling?'■ 操るのをやめる':'🎮 操る';
+    $('control-creature').setAttribute('aria-pressed',String(controlling));
+    $('control-help').hidden=!controlling;
+    $('control-help').textContent=p?'地図をタップで移動 · 資源をタップで採集 · 他国の集落をタップで侵攻':'地図をタップで移動 · 資源や対象をタップでアクション';
+    if(a){$('person-name').textContent=ANIMAL_TYPES[a.kind]?.name??'生き物';$('person-action').textContent=a.manualTarget?'指示を実行中':'自由に行動中';$('health').value=100;$('health-value').textContent='—';}
     if(p){$('person-name').textContent=p.name+'（'+(p.sex==='male'?'男':'女')+'）';$('person-action').textContent=p.action;
       $('health').value=p.hp;$('fullness').value=p.fullness;$('person-age').textContent=Math.floor(p.age);
       $('health-value').textContent=Math.ceil(p.hp);$('fullness-value').textContent=Math.ceil(p.fullness);
@@ -309,6 +330,32 @@ class Game {
     button.setAttribute('aria-pressed',String(this.audio.enabled));
   }
   renamePerson(){if(!this.selected)return;const next=prompt('人の名前',this.selected.name);if(next?.trim()){this.selected.name=next.trim().slice(0,40);this.updateInfo();this.renderSocieties();}}
+  controlTap(x,y){
+    const state=this.controlled;if(!state)return false;
+    const creature=state.type==='human'?this.people.find(p=>p.id===state.id&&p.alive):this.animals.items.find(a=>a.id===state.id);
+    if(!creature){this.controlled=null;this.updateInfo();return true;}
+    if(state.type==='animal'){this.message(this.animals.command(state.id,x,y,this));return true;}
+    const society=this.societyAt(x,y),village=this.society.villageFor(creature),attackerId=village?.kingdomId;
+    if(society&&attackerId){
+      const target=society.type==='kingdom'?this.society.kingdoms.find(k=>k.id===society.id):this.society.villages.find(v=>v.id===society.id);
+      if(target&&!(society.type==='kingdom'?target.id===attackerId:target.kingdomId===attackerId)){
+        this.message(this.society.startInvasion(attackerId,society.type,society.id,this.people)?`${creature.name}の国が侵攻を開始しました`:'侵攻には自国の槍兵5人と兵力が必要です');return true;
+      }
+    }
+    if(!this.world.walkable(x,y)){this.message('人は歩ける陸地に指示してください');return true;}
+    const cell=Math.floor(y)*this.world.width+Math.floor(x),material=this.materials.byCell.get(cell),food=this.food.byCell.get(cell);
+    const kind=material?.amount>0?material.kind:food?.amount>0?'food':'move';
+    creature.manualTarget={cell,kind};creature.setTask(null);
+    this.message(kind==='move'?`${creature.name}が移動します`:`${creature.name}が${{food:'食料',wood:'木',stone:'石'}[kind]}へ向かいます`);return true;
+  }
+  tapBigBang(x,y){
+    if(!Number.isFinite(x)||!Number.isFinite(y)||x<0||y<0||x>=this.world.width||y>=this.world.height)return;
+    if(!this.bigBangPreview||Math.hypot(x-this.bigBangPreview.x,y-this.bigBangPreview.y)>5){
+      this.bigBangPreview={x,y};this.message('赤い範囲を確認。ここで爆発させるなら、同じ場所をもう一度タップ');return;
+    }
+    this.bigBangPreview=null;
+    this.message(this.bigBang.launch(x,y,this)?'ビッグバンクハツ！ 周囲が吹き飛びました':'爆発を起こせませんでした');
+  }
   renderSocieties(){
     const root=$('society-list');root.replaceChildren();
     const name=id=>this.people.find(p=>p.id===id)?.name??'成人不在';
@@ -361,10 +408,10 @@ class Game {
     finally{$('load-file').disabled=false;$('load-input').value='';}
   }
   setMode(mode){
-    this.cancelHold();this.dragPerson=null;this.finishPaint(true);this.mode=mode;
-    for(const m of ['move','place','land','resource','village','kingdom','god','invasion','independence','ship','meteor','hole-people','hole-land','hole-all','volcano','reverse-volcano','lightning','wind','tornado','strong-tornado','moss','animal']){$(m).classList.toggle('selected',m===mode);$(m).setAttribute('aria-pressed',String(m===mode));}
+    this.cancelHold();this.dragPerson=null;this.finishPaint(true);this.mode=mode;if(mode!=='move'){this.controlled=null;this.bigBangPreview=null;this.updateInfo();}
+    for(const m of ['move','place','land','resource','village','kingdom','god','invasion','independence','ship','meteor','big-bang','hole-people','hole-land','hole-all','volcano','reverse-volcano','lightning','wind','tornado','strong-tornado','moss','animal']){$(m).classList.toggle('selected',m===mode);$(m).setAttribute('aria-pressed',String(m===mode));}
     $('brush-control').hidden=mode!=='land';$('society-control').hidden=!['village','kingdom'].includes(mode);$('clear-map').hidden=mode!=='land';$('terrain-control').hidden=mode!=='land';$('resource-control').hidden=mode!=='resource';
-    this.message(mode==='tornado'||mode==='strong-tornado'?'地図をスワイプで台風を出す。台風をタップすると小さくなり、人を解放':mode==='moss'?'陸地をタップでコケを置く。再タップで取り除く':mode==='animal'?'動物の種類を選んで地図をタップ':mode==='god'?'集落から離れた陸地をタップして神の国を作る':mode==='lava'?'溶岩雨が降っています。地図をタップで降る場所を変更':mode==='volcano'?'地図をタップ。陸は焦げ、水は黒曜石の島になります':mode==='reverse-volcano'?'陸地をタップすると周囲の海へ土地が広がります':mode==='lightning'?'落雷地点をタップ':mode==='wind'?'地図をスワイプして風向きを決めます':mode.startsWith('hole-')?'地図をタップで出現。同じ穴をもう一度タップすると消えます':mode==='meteor'?'落下地点をタップ。周囲の人と資源に被害が出ます':mode==='land'?'指で地形を描く · 人や家のある場所は保護されます':mode==='village'?'タップした場所に集落を作ります':mode==='kingdom'?'タップした場所に国を作ります':mode==='invasion'?'侵攻する国か、その国の集落をタップします':mode==='independence'?'未開拓の陸地をタップして独立集落を作ります':mode==='ship'?'海を越えた陸地をタップして船を出します':mode==='resource'?'資源を選び、陸地をタップして置こう':mode==='move'?'指で移動 · 2本指で拡大縮小':'砂浜・草原・砂漠をタップして、人を置こう');
+    this.message(mode==='tornado'||mode==='strong-tornado'?'地図をスワイプで台風を出す。台風をタップすると小さくなり、人を解放':mode==='moss'?'陸地をタップでコケを置く。再タップで取り除く':mode==='animal'?'動物の種類を選んで地図をタップ':mode==='god'?'集落から離れた陸地をタップして神の国を作る':mode==='lava'?'溶岩雨が降っています。地図をタップで降る場所を変更':mode==='volcano'?'地図をタップ。陸は焦げ、水は黒曜石の島になります':mode==='reverse-volcano'?'陸地をタップすると周囲の海へ土地が広がります':mode==='lightning'?'落雷地点をタップ':mode==='wind'?'地図をスワイプして風向きを決めます':mode.startsWith('hole-')?'地図をタップで出現。同じ穴をもう一度タップすると消えます':mode==='big-bang'?'爆発させる地点をタップして範囲を確認。もう一度同じ場所をタップで発動':mode==='meteor'?'落下地点をタップ。周囲の人と資源に被害が出ます':mode==='land'?'指で地形を描く · 人や家のある場所は保護されます':mode==='village'?'タップした場所に集落を作ります':mode==='kingdom'?'タップした場所に国を作ります':mode==='invasion'?'侵攻する国か、その国の集落をタップします':mode==='independence'?'未開拓の陸地をタップして独立集落を作ります':mode==='ship'?'海を越えた陸地をタップして船を出します':mode==='resource'?'資源を選び、陸地をタップして置こう':mode==='move'?'指で移動 · 2本指で拡大縮小':'砂浜・草原・砂漠をタップして、人を置こう');
   }
   clearMap(){
     this.finishPaint(true);this.pointers.clear();this.regenerate(true);$('terrain').value='2';this.setMode('land');
@@ -379,7 +426,7 @@ class Game {
       const stop=this.audio.enabled&&['playing','loading','paused'].includes(this.audio.status);
       this.audio.setEnabled(!stop);
     };
-    for(const mode of ['move','place','land','resource','village','kingdom','god','invasion','independence','ship','meteor','hole-people','hole-land','hole-all','volcano','reverse-volcano','lightning','wind','tornado','strong-tornado','moss','animal'])$(mode).onclick=()=>this.setMode(mode);
+    for(const mode of ['move','place','land','resource','village','kingdom','god','invasion','independence','ship','meteor','big-bang','hole-people','hole-land','hole-all','volcano','reverse-volcano','lightning','wind','tornado','strong-tornado','moss','animal'])$(mode).onclick=()=>this.setMode(mode);
     $('god-toggle').onclick=()=>{const state=this.detailSociety;if(state?.type!=='kingdom')return;const god=this.society.kingdoms.find(k=>k.id===state.id&&k.god);if(!god)return;god.godActive=!god.godActive;if(god.godActive)god.godNextAt=this.elapsedSeconds+40;this.renderSocietyDetails();this.renderSocieties();this.message(god.godActive?'神の行動を再開しました':'神の行動を止めました');};
     $('rain').onclick=()=>{this.message(this.weather.toggleRain());this.updateWeatherButtons();};
     $('lava').onclick=()=>{
@@ -392,7 +439,8 @@ class Game {
     const cancelClear=()=>{this.setPaused(this.clearWasPaused);$('clear-confirm').close();};
     $('clear-cancel').onclick=cancelClear;$('clear-confirm').addEventListener('cancel',e=>{e.preventDefault();cancelClear();});
     $('clear-yes').onclick=()=>{this.clearMap();this.setPaused(this.clearWasPaused);$('clear-confirm').close();};
-    $('close-person').onclick=()=>{this.selected=null;this.updateInfo();};
+    $('close-person').onclick=()=>{this.selected=null;this.selectedAnimal=null;this.controlled=null;this.updateInfo();};
+    $('control-creature').onclick=()=>{const type=this.selected?'human':'animal',id=this.selected?.id??this.selectedAnimal?.id;if(!id)return;const on=this.controlled?.type===type&&this.controlled.id===id;if(on){if(this.selected)this.selected.manualTarget=null;else if(this.selectedAnimal)this.selectedAnimal.manualTarget=null;}this.controlled=on?null:{type,id};this.setMode('move');if(!on)this.controlled={type,id};this.updateInfo();this.message(on?'操作を終了しました':`${this.selected?.name??ANIMAL_TYPES[this.selectedAnimal.kind].name}を操作中。地図をタップして指示します`);};
     $('rename-person').onclick=()=>this.renamePerson();
     $('society-detail-close').onclick=()=>$('society-detail').close();
     $('society-detail').addEventListener('keydown',e=>{if(e.key==='Escape')$('society-detail').close();});
@@ -437,13 +485,13 @@ class Game {
     $('save-file').onclick=()=>this.saveFile();$('load-file').onclick=()=>$('load-input').click();$('load-input').onchange=e=>this.readSave(e.target.files[0]);
     const cancelLoad=()=>{this.pendingLoad=null;this.setPaused(this.loadWasPaused);$('load-confirm').close();};
     $('load-cancel').onclick=cancelLoad;$('load-confirm').addEventListener('cancel',e=>{e.preventDefault();cancelLoad();});
-    $('load-yes').onclick=()=>{if(!this.pendingLoad)return;$('society-detail').close();Object.assign(this,this.pendingLoad);this.pendingLoad=null;this.selected=null;this.pointers.clear();this.lastNews=null;this.setPaused(true);this.rebuildTerrain();this.setMode('move');$('load-confirm').close();this.message('読み込みました。「再開」で続きを遊べます');};
+    $('load-yes').onclick=()=>{if(!this.pendingLoad)return;$('society-detail').close();Object.assign(this,this.pendingLoad);this.pendingLoad=null;this.selected=null;this.selectedAnimal=null;this.controlled=null;this.bigBangPreview=null;this.pointers.clear();this.lastNews=null;this.setPaused(true);this.rebuildTerrain();this.setMode('move');$('load-confirm').close();this.message('読み込みました。「再開」で続きを遊べます');};
     $('regenerate').onclick=()=>$('confirm').showModal();$('cancel').onclick=()=>$('confirm').close();$('yes').onclick=()=>{this.regenerate();this.setMode('move');$('confirm').close();};
     const point=e=>{const r=this.canvas.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top};};
     this.canvas.addEventListener('pointerdown',e=>{
       if(e.pointerType==='mouse'&&e.button!==0)return;
       this.canvas.setPointerCapture(e.pointerId);const p=point(e);this.pointers.set(e.pointerId,p);
-      if(this.pointers.size===1){this.gestureMulti=false;this.start=p;this.moved=false;this.cancelHold();if(this.mode==='move'||this.mode==='place'){const wx=(p.x-this.x)/this.scale,wy=(p.y-this.y)/this.scale,person=this.people.filter(h=>Math.hypot(h.x-wx,h.y-wy)<22/this.scale).sort((a,b)=>Math.hypot(a.x-wx,a.y-wy)-Math.hypot(b.x-wx,b.y-wy))[0];if(person)this.holdTimer=setTimeout(()=>{this.holdTimer=null;if(person.alive&&this.pointers.size===1&&!this.moved){this.dragPerson=person;this.dragPoint=p;this.selected=person;this.updateInfo();this.message('指を動かして、陸地で離すと人を移動できます');}},550);}if(this.mode==='land'){const terrain=Number($('terrain').value),protectedCells=new Set([...this.buildings.items.map(h=>h.cell),...this.society.villages.map(v=>v.farmCell)]);if(terrain===0||terrain===3)for(const person of this.people)protectedCells.add(person.cell(this.world));this.editor.begin((p.x-this.x)/this.scale,(p.y-this.y)/this.scale,Number($('brush').value),terrain,protectedCells);}}
+      if(this.pointers.size===1){this.gestureMulti=false;this.start=p;this.moved=false;this.cancelHold();if((this.mode==='move'&&!this.controlled)||this.mode==='place'){const wx=(p.x-this.x)/this.scale,wy=(p.y-this.y)/this.scale,person=this.people.filter(h=>Math.hypot(h.x-wx,h.y-wy)<22/this.scale).sort((a,b)=>Math.hypot(a.x-wx,a.y-wy)-Math.hypot(b.x-wx,b.y-wy))[0];if(person)this.holdTimer=setTimeout(()=>{this.holdTimer=null;if(person.alive&&this.pointers.size===1&&!this.moved){this.dragPerson=person;this.dragPoint=p;this.selected=person;this.updateInfo();this.message('指を動かして、陸地で離すと人を移動できます');}},550);}if(this.mode==='land'){const terrain=Number($('terrain').value),protectedCells=new Set([...this.buildings.items.map(h=>h.cell),...this.society.villages.map(v=>v.farmCell)]);if(terrain===0||terrain===3)for(const person of this.people)protectedCells.add(person.cell(this.world));this.editor.begin((p.x-this.x)/this.scale,(p.y-this.y)/this.scale,Number($('brush').value),terrain,protectedCells);}}
       else{this.gestureMulti=true;this.cancelHold();this.dragPerson=null;this.moved=true;this.finishPaint(true);}
     });
     this.canvas.addEventListener('pointermove',e=>{
@@ -477,7 +525,7 @@ class Game {
         const toX=(p.x-this.x)/this.scale,toY=(p.y-this.y)/this.scale;
         this.message(this.tornado.start(x,y,toX,toY,this.mode==='strong-tornado'?'strong':'normal',this)?'台風が発生！ タップすると小さくなります':'台風は同時に2つまで。地図の中を長めにスワイプしてください');
       }
-      else if(!cancel&&!this.moved&&this.pointers.size===1){const x=(p.x-this.x)/this.scale,y=(p.y-this.y)/this.scale;if(this.mode==='tornado'||this.mode==='strong-tornado')this.message(this.tornado.tap(x,y)?'台風が小さくなり、人を解放します':'台風の中心をタップしてください');else if(this.mode==='moss')this.message(this.tornado.toggleMoss(x,y,this));else if(this.mode==='animal')this.message(this.animals.place($('animal-kind').value,x,y,this));else if(this.mode==='god'){this.message(this.gods.place(x,y,this));this.renderSocieties();}else if(this.mode==='volcano'||this.mode==='reverse-volcano')this.message(this.weather.placeVolcano(x,y,this.mode==='volcano'?'volcano':'reverse',this));else if(this.mode==='lightning')this.message(this.weather.strike(x,y,this)?'雷が落ちました':'地図の中をタップしてください');else if(this.mode==='lava')this.message(this.weather.aimLava(x,y,this.world)?'溶岩雨の降る場所を変えました':'地図の中をタップしてください');else if(this.mode.startsWith('hole-'))this.message(this.blackHoles.toggle(x,y,this.mode.slice(5),this));else if(this.mode==='place')this.spawn(x,y,$('sex').value,$('age').value.trim()===''?NaN:Number($('age').value));else if(this.mode==='resource')this.placeResource(x,y,$('resource-kind').value);else if(this.mode==='village'||this.mode==='kingdom'){const made=this.society.createManual(this.mode,x,y,this.people);if(made)this.message(`${made.name}を作りました`);this.renderSocieties();}else if(this.mode==='independence'){const made=this.society.createIndependent(x,y,this.people);this.message(made?`${made.name}を作りました`:'未開拓で歩ける陸地を選んでください');this.renderSocieties();}else if(this.mode==='ship'){const selectedVillage=this.selected&&this.society.villageFor(this.selected),kingdomId=selectedVillage?.kingdomId??this.society.kingdoms[0]?.id;if(kingdomId&&this.society.createShip(kingdomId,x,y,this.people))this.message('男女を含む10人の船団が出航しました');else this.message('別の島の空き地、男女を含む10人、木20・石10・食料30が必要です');}else if(this.mode==='meteor'){if(this.meteor.launch(x,y,this.world))this.message('隕石が接近中！');}else if(this.mode==='invasion'){const society=this.societyAt(x,y);if(society)this.openSocietyDetails(society.type,society.id);else this.message('侵攻する国名か、その国の集落名をタップしてください');}else if(this.mode==='move'){const society=this.societyAt(x,y);if(society)this.openSocietyDetails(society.type,society.id);else this.inspect(x,y);}}
+      else if(!cancel&&!this.moved&&this.pointers.size===1){const x=(p.x-this.x)/this.scale,y=(p.y-this.y)/this.scale;if(this.mode==='move'&&this.controlled)this.controlTap(x,y);else if(this.mode==='big-bang')this.tapBigBang(x,y);else if(this.mode==='tornado'||this.mode==='strong-tornado')this.message(this.tornado.tap(x,y)?'台風が小さくなり、人を解放します':'台風の中心をタップしてください');else if(this.mode==='moss')this.message(this.tornado.toggleMoss(x,y,this));else if(this.mode==='animal')this.message(this.animals.place($('animal-kind').value,x,y,this));else if(this.mode==='god'){this.message(this.gods.place(x,y,this));this.renderSocieties();}else if(this.mode==='volcano'||this.mode==='reverse-volcano')this.message(this.weather.placeVolcano(x,y,this.mode==='volcano'?'volcano':'reverse',this));else if(this.mode==='lightning')this.message(this.weather.strike(x,y,this)?'雷が落ちました':'地図の中をタップしてください');else if(this.mode==='lava')this.message(this.weather.aimLava(x,y,this.world)?'溶岩雨の降る場所を変えました':'地図の中をタップしてください');else if(this.mode.startsWith('hole-'))this.message(this.blackHoles.toggle(x,y,this.mode.slice(5),this));else if(this.mode==='place')this.spawn(x,y,$('sex').value,$('age').value.trim()===''?NaN:Number($('age').value));else if(this.mode==='resource')this.placeResource(x,y,$('resource-kind').value);else if(this.mode==='village'||this.mode==='kingdom'){const made=this.society.createManual(this.mode,x,y,this.people);if(made)this.message(`${made.name}を作りました`);this.renderSocieties();}else if(this.mode==='independence'){const made=this.society.createIndependent(x,y,this.people);this.message(made?`${made.name}を作りました`:'未開拓で歩ける陸地を選んでください');this.renderSocieties();}else if(this.mode==='ship'){const selectedVillage=this.selected&&this.society.villageFor(this.selected),kingdomId=selectedVillage?.kingdomId??this.society.kingdoms[0]?.id;if(kingdomId&&this.society.createShip(kingdomId,x,y,this.people))this.message('男女を含む10人の船団が出航しました');else this.message('別の島の空き地、男女を含む10人、木20・石10・食料30が必要です');}else if(this.mode==='meteor'){if(this.meteor.launch(x,y,this.world))this.message('隕石が接近中！');}else if(this.mode==='invasion'){const society=this.societyAt(x,y);if(society)this.openSocietyDetails(society.type,society.id);else this.message('侵攻する国名か、その国の集落名をタップしてください');}else if(this.mode==='move'){if(!this.inspect(x,y)){const society=this.societyAt(x,y);if(society)this.openSocietyDetails(society.type,society.id);}}}
       this.pointers.delete(e.pointerId);
     };
     this.canvas.addEventListener('pointerup',e=>end(e));this.canvas.addEventListener('pointercancel',e=>end(e,true));this.canvas.addEventListener('lostpointercapture',e=>{if(this.pointers.has(e.pointerId)){this.cancelHold();this.dragPerson=null;this.finishPaint(true);this.pointers.delete(e.pointerId);}});
@@ -496,7 +544,7 @@ class Game {
         this.stepSimulation(dt);this.simBacklog-=dt;steps++;
       }
     }
-    if(!document.hidden&&!this.paused){this.meteor.update(Math.min(realDt,.5),this);this.gods.animate(Math.min(realDt,.5));this.removeDead();}
+    if(!document.hidden&&!this.paused){this.meteor.update(Math.min(realDt,.5),this);this.bigBang.update(Math.min(realDt,.5),this);this.gods.animate(Math.min(realDt,.5));this.removeDead();}
     if(!this.speedMeasureAt){this.speedMeasureAt=t;this.speedMeasureSeconds=this.elapsedSeconds;}
     if(t-this.speedMeasureAt>=3000){
       if(!this.paused&&!document.hidden)this.actualSpeed=(this.elapsedSeconds-this.speedMeasureSeconds)*1000/(t-this.speedMeasureAt);
@@ -535,6 +583,7 @@ class Game {
         `世界が${era.label}に入りました。家に庭ができ、戦いの道具と船の帆が進化しました。`);
   }
   draw(){const c=this.ctx;c.setTransform(this.dpr||1,0,0,this.dpr||1,0,0);c.fillStyle='#153e50';c.fillRect(0,0,this.w,this.h);c.imageSmoothingEnabled=false;c.drawImage(this.terrain,this.x,this.y,this.world.width*this.scale,this.world.height*this.scale);this.tornado.drawMoss(c,this);
+    if(this.mode==='big-bang'&&this.bigBangPreview){c.save();c.strokeStyle='#ffce75';c.fillStyle='#f4645136';c.lineWidth=2;c.beginPath();c.arc(this.x+this.bigBangPreview.x*this.scale,this.y+this.bigBangPreview.y*this.scale,Math.max(4,35*this.scale),0,Math.PI*2);c.fill();c.stroke();c.restore();}
     this.town.drawRoads(c,this);
     if(currentEra(this.elapsedSeconds).year>=15)for(const h of this.buildings.items)if(h.complete)drawYard(c,this,h);
     for(const n of this.materials.items){
@@ -572,12 +621,14 @@ class Game {
     for(const ship of this.society.ships){const x=this.x+ship.x*this.scale,y=this.y+ship.y*this.scale,r=Math.max(4,this.scale*.7);c.fillStyle='#5b3b2c';c.beginPath();c.moveTo(x-r*1.4,y);c.lineTo(x+r*1.4,y);c.lineTo(x+r*.8,y+r*.55);c.lineTo(x-r*.8,y+r*.55);c.closePath();c.fill();c.fillStyle='#f4e5b5';c.beginPath();c.moveTo(x,y-r*1.5);c.lineTo(x,y);c.lineTo(x+r*(currentEra(this.elapsedSeconds).year>=15?1.3:.9),y);c.closePath();c.fill();c.fillStyle='#fff';c.font='bold 12px system-ui';c.textAlign='center';c.fillText(String(ship.passengerIds?.length??0),x,y-r*1.6);}
     for(const f of this.food.items){const x=this.x+f.x*this.scale,y=this.y+f.y*this.scale;if(x<0||y<0||x>this.w||y>this.h)continue;const r=Math.max(2,Math.min(5,this.scale));c.fillStyle=f.amount?'#dceaa0':'#566d48';c.fillRect(x-r,y-r,r*2,r*2);if(f.amount){c.fillStyle='#c36b49';c.fillRect(x-r*.5,y-r*.5,r,r);}}
     this.animals.draw(c,this);
+    const controlledAnimal=this.controlled?.type==='animal'&&this.animals.items.find(a=>a.id===this.controlled.id);
+    const mark=controlledAnimal??this.selectedAnimal;if(mark){c.save();c.strokeStyle=controlledAnimal?'#f9dc70':'#fff4b6';c.lineWidth=3;c.beginPath();c.arc(this.x+mark.x*this.scale,this.y+mark.y*this.scale,Math.max(12,this.scale*4),0,Math.PI*2);c.stroke();c.restore();}
     for(const p of this.people){
       if(p.shipId)continue;
       const x=this.x+p.x*this.scale,y=this.y+p.y*this.scale;
       const size=Math.max(2.3,Math.min(4,this.scale*.75))*(p.age<18?.8:1);
       if(x+size<0||y+size<0||x-size>this.w||y-size>this.h)continue;
-      if(p===this.selected){c.strokeStyle='#fff4b6';c.lineWidth=2;c.beginPath();c.arc(x,y,Math.max(8,size*4),0,Math.PI*2);c.stroke();}
+      if(p===this.selected||this.controlled?.type==='human'&&this.controlled.id===p.id){c.strokeStyle=this.controlled?.type==='human'&&this.controlled.id===p.id?'#f9dc70':'#fff4b6';c.lineWidth=2;c.beginPath();c.arc(x,y,Math.max(8,size*4),0,Math.PI*2);c.stroke();}
       const village=this.society.villageFor(p);
       const kingdom=village&&this.society.kingdoms.find(k=>k.id===village.kingdomId);
       const clothing=village?this.villageColor(village):kingdom?this.kingdomColor(kingdom):'#d5d0c2';
@@ -613,7 +664,7 @@ class Game {
     const overview=this.scale<=this.minScale*2.5;c.font=`bold ${overview?15:13}px system-ui`;c.textAlign='center';c.lineWidth=3;c.strokeStyle='#17343b';
     if(overview){for(const k of this.society.kingdoms){const bounds=this.kingdomBounds(k);if(!bounds)continue;const x=this.x+((bounds.minX+bounds.maxX)/2)*this.scale,y=this.y+bounds.minY*this.scale-8;if(x<0||y<0||x>this.w||y>this.h)continue;const label=`${k.god?'✨ ':''}${k.name}`;c.strokeText(label,x,y);c.fillStyle=this.kingdomColor(k);c.fillText(label,x,y);}for(const v of this.society.villages.filter(v=>v.kingdomId===null)){const x=this.x+v.x*this.scale,y=this.y+v.y*this.scale-12;if(x<0||y<0||x>this.w||y>this.h)continue;c.strokeText(v.name,x,y);c.fillStyle=this.villageColor(v);c.fillText(v.name,x,y);}}
     else{for(const v of this.society.villages){const x=this.x+v.x*this.scale,y=this.y+v.y*this.scale-18;if(x<0||y<0||x>this.w||y>this.h)continue;const k=this.society.kingdoms.find(k=>k.id===v.kingdomId),label=`${k?k.name+' / ':''}${v.name}`;c.strokeText(label,x,y);c.fillStyle=this.villageColor(v);c.fillText(label,x,y);}}
-    this.meteor.draw(c,this);this.blackHoles.draw(c,this);this.weather.draw(c,this);this.tornado.draw(c,this);this.gods.draw(c,this);
+    this.meteor.draw(c,this);this.bigBang.draw(c,this);this.blackHoles.draw(c,this);this.weather.draw(c,this);this.tornado.draw(c,this);this.gods.draw(c,this);
     if(this.dragPerson){const x=this.dragPoint.x,y=this.dragPoint.y;c.strokeStyle=this.world.walkable((x-this.x)/this.scale,(y-this.y)/this.scale)?'#c7e6a1':'#ff8b7b';c.lineWidth=3;c.beginPath();c.arc(x,y,14,0,Math.PI*2);c.stroke();c.fillStyle='#fff';c.fillText(this.dragPerson.name,x,y-22);}
 
   }
